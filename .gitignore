@@ -11,7 +11,7 @@ build/
 node_modules/
 
 # 运行产物（baselines 除外，随 git 提交）
-artifacts/runs/
+**/artifacts/runs/
 
 # 本地环境
 .env
