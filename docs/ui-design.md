@@ -1,9 +1,10 @@
 # RAG Testing Plugin — UI 设计
 
-> 版本：v0.1（对应架构 v0.3 §4.2/§15-M5）
+> 版本：v0.2（对应架构 v0.3 §4.2/§15-M5；补充 Run Detail / 失败诊断 Demo）
 > 日期：2026-08-20
 > 形态：**`sidebar.footer.action` 菜单按钮 + `shell.overlay` 全屏页**（参照 dsh-agentloop）
 > 技术约束：client bundle 为手写 `window.__ModuleLoader__.load` 格式 React；无 URL 路由（页内 tab 状态管理）；组件用 `@deepseek-ai/dsh-client-ui-primitives`（Button/Pill/Modal/Input/Toast/JsonTree/StateDot/TerminalBlock 等）；数据全部来自 host 半 HTTP 路由（§5 数据契约），不直连引擎。
+> 前端原型：[`docs/rag-run-detail-demo.html`](rag-run-detail-demo.html)（单 HTML，可直接打开，用于评审运行详情信息架构与交互）
 
 ---
 
@@ -110,51 +111,246 @@
 
 状态图标映射终态机：`DONE`✅ / `DONE(gate_failed)`❌ / `PARTIAL`⚠ / `ERROR`⛔ / `TIMEOUT`⏱ / `CANCELLED`⛔ / 运行中●（进度条来自 `status.json.progress`）
 
-### 5.2 运行详情（点击行进入，信息密度最高的页面）
+### 5.2 运行详情 / 失败诊断（点击行进入，信息密度最高的页面）
+
+运行详情页的核心目标：
+
+- **3 秒知道哪里失败**：Run Header、Metric Bar、Quality Gate 直接暴露失败状态与违规规则。
+- **30 秒知道为什么失败**：Case Navigator + Evaluation Panel 直接展示失败 Case、未达标指标、Failure Diagnosis。
+- **3 分钟定位到具体 Chunk / Metric / Stage**：Case Detail 内展开 Pipeline、Retrieval TopK、Actual vs Expected、Latency Trend、Raw Data、Logs。
+
+页面整体参考 Prometheus / Grafana / Datadog / GitHub Actions Run Detail，但必须保持 RAG 调试语义，不做普通 CRUD 后台。
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│ ← 返回列表   运行 20260819-2210…  · e2e_generation              │
-│ Gate: ❌ FAIL（2 项违规）  Baseline: main（可比✓）   时长 4m12s   │
-│ ┌──────────────────────────────────────────────────────────┐   │
-│ │ 违规: recall@5 0.84 < 0.90 │ faithfulness 回归 -8.7% > 3%  │   │
-│ ├──────────────────────────────────────────────────────────┤   │
-│ │ 环境指纹: llm=xuanjian-lite · skill=xj-kbase@a1b2 ·        │   │
-│ │           emb=qwen3-0.6b · rerank=off · agent=v0.8.2       │   │
-│ ├──────────────┬───────────────────────────────────────────┤   │
-│ │ Case 列表     │  Case 详情（选中 gen_002）                  │   │
-│ │ [过滤: 失败▾] │  ─────────────────────────────────────    │   │
-│ │ ✗ gen_002    │  ❌ 单文档事实问答        severity: critical│   │
-│ │ ✗ gen_007    │  问题: "十三五规划的主要目标是什么？"         │   │
-│ │ ✓ gen_001    │                                            │   │
-│ │ ✓ gen_003    │  【指标】                                  │   │
-│ │ …            │  ✗ golden_facts   0.50 < 1.0               │   │
-│ │              │     缺失事实: "全面建成小康社会"              │   │
-│ │              │  ✓ forbidden_fact  pass                     │   │
-│ │              │  ✓ citation_format pass（找到 [^1][^2]）     │   │
-│ │              │                                            │   │
-│ │              │  【归因】🧭 generation_failure              │   │
-│ │              │  检索命中 ✓（expected doc 已召回，问题在生成） │   │
-│ │              │                                            │   │
-│ │              │  【Trace】                                 │   │
-│ │              │  agent_tool_calls:                         │   │
-│ │              │  ① knowledge_retrieve query="十三五 目标"    │   │
-│ │              │     top_k=10 → 8 chunks ✓命中 doc_shisanwu  │   │
-│ │              │     320ms · is_error=false                  │   │
-│ │              │  client_spans: chat 8.4s · usage 3210+256tok│   │
-│ │              │  unavailable: prompt全文 / rerank_scores    │   │
-│ │              │                                            │   │
-│ │              │  【回答 vs 期望】         [查看 raw JSON]    │   │
-│ │              │  实际: "十三五规划提出…（节选）"              │   │
-│ │              │  应含: "到 2020 年全面建成小康社会" ✗ 未出现  │   │
-│ └──────────────┴───────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Sidebar                                                                      │
+│  测试运行 active                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ RAG 测试 / 运行详情 / e2e_generation                                          │
+│ e2e_generation  FAILED                                      [重新运行][导出] │
+│ Run ID · Trigger · Branch · Baseline · Duration · Start Time                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 通过率 18/20 │ Recall@5 0.84 │ Faithfulness 0.81 │ P95 1.95s │ Token 1411  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 质量门失败：2 个规则未通过                                                    │
+│ Recall@5 < 0.90   Current 0.84 / Threshold 0.90                              │
+│ Faithfulness Regression   Current 0.81 / Baseline 0.89 / Regression -8.7%    │
+├──────────────────┬────────────────────────────────────────┬──────────────────┤
+│ Case Navigator   │ Case Detail                            │ Evaluation       │
+│ 搜索 / 全部失败通过│ Query                                  │ Tabs             │
+│ ✗ gen_002        │ RAG Pipeline                            │ Baseline Switch  │
+│ ✗ gen_007        │ Query + Copy                            │ Metric Table     │
+│ ✓ gen_001        │ Retrieval Top 5                         │ Failure Diagnosis│
+│ ✓ gen_003        │ Actual vs Expected                       │ Trace / Latency  │
+│                  │ 最近 20 次运行延迟趋势                  │                  │
+├──────────────────┴────────────────────────────────────────┴──────────────────┤
+│ > 原始数据 Raw Data（默认折叠，Request / Response / Prompt / Chunks / JSON）  │
+│ > 日志 Logs（默认折叠，All / INFO / WARN / ERROR 过滤）                       │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-检索类 case 的详情右栏替换为：
-- **Expected vs Actual 对照表**：expected documents（命中✓/未命中✗）× actual top-k 列表（rank/score/是否 expected/是否 forbidden 高亮）
-- forbidden 命中的行红色背景（permission_leak 一眼可见）
-- score 序列条形图 + degraded 标志 + 轮询时间线（indexing 相关 case）
+#### 5.2.1 Run Header
+
+顶部只放运行身份、状态与低频操作：
+
+- 面包屑：`RAG 测试 / 运行详情 / e2e_generation`
+- 标题：`e2e_generation` + `FAILED` badge
+- 元信息：`Run ID`、`Trigger`、`Branch`、`Baseline`、`Duration`、`Start Time`
+- 操作：`重新运行`、`导出报告`、`更多操作`
+
+Demo 阶段按钮只需 toast / console 反馈；正式接入时分别映射到 rerun、report export、artifact 操作。
+
+#### 5.2.2 Metric Bar
+
+Header 下方是一排紧凑 Stat Panel，不使用大卡片：
+
+| 指标 | Current | 辅助信息 |
+|---|---:|---|
+| 通过率 | `18 / 20` | `90.0%` |
+| Recall@5 | `0.84` | `Threshold 0.90`、`↓ 6.7%` |
+| Faithfulness | `0.81` | `Baseline 0.89`、`↓ 8.7%` |
+| P95 Latency | `1.95s` | `Baseline 1.82s`、`↑ 7.1%` |
+| Token / Case | `1,411` | `Baseline 1,320`、`↑ 6.9%` |
+
+颜色语义：质量下降为红色，成本/延迟上升为橙色，达标为绿色。所有数值优先使用等宽字体。
+
+#### 5.2.3 Quality Gate
+
+Quality Gate 使用浅红背景 + 红色边框的紧凑条，不做巨大 Alert：
+
+- 标题：`质量门失败：2 个规则未通过`
+- 规则 1：`Recall@5 < 0.90`，显示 `Current 0.84` / `Threshold 0.90`
+- 规则 2：`Faithfulness Regression`，显示 `Current 0.81` / `Baseline 0.89` / `Regression -8.7%`
+
+该区域用于回答“为什么整个 Run 失败”，不是展示所有指标。
+
+#### 5.2.4 三栏主工作区
+
+桌面优先，推荐列宽：
+
+| 区域 | 宽度 | 作用 |
+|---|---:|---|
+| Case Navigator | 18% | 让用户快速定位失败 Case |
+| Case Detail | 52% | 展示当前 Case 的 RAG Pipeline 与证据 |
+| Evaluation | 30% | 指标、Baseline Diff、失败诊断、Trace |
+
+1440 / 1920 / 2560 宽度下保持高信息密度；窄屏可把 Evaluation 下移，但 M5 以桌面评审为主。
+
+#### 5.2.5 Case Navigator
+
+Case Navigator 必须支持页内真实交互，不刷新页面：
+
+- 搜索：`搜索用例名称 / 关键词`
+- 过滤：`全部 20`、`失败 2`、`通过 18`
+- 列表项显示：case id、中文名称、状态、失败摘要
+
+示例：
+
+```
+gen_002
+中文档事实问答
+FAILED
+Recall@5 0.40 < 0.90
+
+gen_007
+越权防护
+FAILED
+Faithfulness 0.71 < 0.85
+```
+
+点击 Case 后，右侧 Case Detail、Evaluation、Raw Data 当前上下文同步更新。
+
+#### 5.2.6 Case Detail
+
+Case Detail 顶部固定展示紧凑 RAG Pipeline：
+
+```
+Query -> Retrieve -> Rerank -> Context -> Generate -> Evaluate
+```
+
+每个 Stage 显示 `status` 与 `latency`：
+
+| Stage | 示例状态 | 示例耗时 |
+|---|---|---:|
+| Query | PASS | 12ms |
+| Retrieve | FAIL | 210ms |
+| Rerank | PASS | 43ms |
+| Context | WARN | 18ms |
+| Generate | PASS | 1.2s |
+| Evaluate | FAIL | 120ms |
+
+Pipeline 风格参考 OpenTelemetry Trace + CI Pipeline：失败节点红色，成功绿色，警告橙色。节点必须紧凑，不做横向大流程图。
+
+Case Detail 内容顺序：
+
+1. **问题 Query**：显示用户问题，右侧 `复制` 按钮真实可用。
+2. **检索结果 Top 5**：表格列为 `Rank`、`Document / Chunk`、`Score`、`Expected`、`Status`。
+3. **Retrieval Diagnosis**：当 expected chunk 未达标时显示 `Expected Chunk 排名过低` 或 `Expected Chunk 未进入 TopK`。
+4. **Actual vs Expected**：左右等宽双栏，保留关键差异高亮。
+5. **最近 20 次运行延迟趋势**：轻量 SVG 折线图，至少包含 `End-to-End P95` 与 `Evaluator P95` 两个系列。
+
+Retrieval TopK 表格要求：
+
+- Score 显示数字 + 小型水平进度条。
+- Expected Chunk 使用绿色或明显标记。
+- Forbidden / Risk 行使用浅红背景。
+- `Rank Too Low` 使用 warning badge。
+
+#### 5.2.7 Evaluation Panel
+
+Evaluation 是右侧常驻诊断面板，顶部包含：
+
+- Tab：`Retrieval`、`Generation`、`Safety`、`综合`
+- Switch：`与基线对比`
+
+Tab 切换必须为真实交互。Baseline Switch 关闭时只显示 `Current / Threshold`；开启时显示 `Current / Threshold / Baseline / Diff`。
+
+Retrieval 示例指标：
+
+| Metric | Current | Threshold | Baseline |
+|---|---:|---:|---:|
+| Recall@5 | 0.40 | 0.90 | 0.91 |
+| Precision@5 | 0.80 | 0.80 | 0.88 |
+| MRR | 0.50 | 0.80 | 0.82 |
+| NDCG@5 | 0.71 | 0.80 | 0.87 |
+
+Generation 示例指标：`Faithfulness`、`Correctness`、`Relevancy`、`Citation`。
+
+Safety 示例指标：`Permission`、`Forbidden Facts`、`Leakage`、`Prompt Injection`。
+
+Evaluation Panel 下半部分固定包含：
+
+- **失败原因**：例如 `Recall@5 未达到阈值 / Expected Chunk 排名过低`、`Faithfulness 未达到阈值 / Answer 中存在无法从 Context 支撑的事实`。
+- **Trace / 耗时分布**：按 Query、Retrieve、Rerank、Context、Generate、Evaluator 展示水平条，Generate 应能明显看出耗时最高。
+
+#### 5.2.8 Raw Data 与 Logs
+
+页面底部保留两个默认折叠区：
+
+- `> 原始数据 Raw Data`
+  - Tab：`Request`、`Response`、`Prompt`、`Retrieved Chunks`、`Model Output`、`Evaluator`、`Raw JSON`
+  - 至少 3-4 个 Tab 有 Mock 数据。
+  - JSON 使用 monospace 代码块。
+  - 支持复制当前 Tab 内容。
+
+- `> 日志 Logs`
+  - 默认折叠。
+  - 展开后展示 `INFO`、`WARN`、`ERROR` 不同级别。
+  - 支持 `All`、`INFO`、`WARN`、`ERROR` 过滤。
+
+#### 5.2.9 Demo Mock Data
+
+前端 Demo 使用 Mock Data，不接真实后端。数据结构按后续工程化拆分预留：
+
+```ts
+run
+cases
+metrics
+retrievalResults
+baseline
+trace
+logs
+rawData
+```
+
+核心 Mock Run：
+
+| 字段 | 值 |
+|---|---|
+| name | `e2e_generation` |
+| status | `failed` |
+| runId | `20260819-221047-f9e8d7` |
+| branch | `main` |
+| duration | `4m12s` |
+| trigger | `manual` |
+| baseline | `main-20260818-221015` |
+
+Demo 原型阶段可以把 Mock Data 内联在单 HTML 中，便于评审；正式实现时迁移到独立 mock / fixture 文件。
+
+#### 5.2.10 视觉规范
+
+运行详情页采用高信息密度的监控平台风格：
+
+| Token | 值 | 用途 |
+|---|---|---|
+| Background | `#f7f8fa` | 页面底色 |
+| Panel | `#ffffff` | 主内容面板 |
+| Border | `#e5e7eb` | 面板分割线、表格线 |
+| Primary | `#2563eb` | 当前选中、主要按钮 |
+| Success | `#16a34a` | PASS、达标 |
+| Failure | `#dc2626` | FAILED、质量门失败、未达标 |
+| Warning | `#d97706` | WARN、延迟/成本上升、Rank Too Low |
+| Text | `#111827` | 主文本 |
+| Secondary | `#6b7280` | 辅助文本 |
+| Sidebar | `#0f172a` | 左侧导航 |
+
+约束：
+
+- Radius 使用 `4px / 6px / 8px`，除 badge/switch 外不超过 `10px`。
+- Panel padding 控制在 `12px ~ 16px`，表格行高 `32px ~ 40px`，section 间距 `8px ~ 12px`。
+- 指标、ID、耗时、JSON、日志使用等宽字体。
+- 不使用大阴影、玻璃拟态、大渐变、大圆角、营销型 hero 或普通 CRUD 卡片布局。
+- 图表优先使用轻量 SVG / CSS；不要为了单个趋势图引入重量级图表依赖。
 
 ## 6. Tab 3：测试套件 Suites
 

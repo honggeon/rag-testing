@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAG 测试 · Overlay Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --color-primary: #1E40AF;
+      --color-on-primary: #FFFFFF;
+      --color-secondary: #3B82F6;
+      --color-accent: #D97706;
+      --color-on-accent: #000000;
+      --color-background: #F8FAFC;
+      --color-foreground: #1E3A8A;
+      --color-card: #FFFFFF;
+      --color-muted: #E9EEF6;
+      --color-muted-foreground: #475569;
+      --color-border: #DBEAFE;
+      --color-destructive: #DC2626;
+      --color-on-destructive: #FFFFFF;
+      --color-success: #047857;
+      --color-ring: #1E40AF;
+      --rail: #0F172A;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --sans: "Fira Sans", "PingFang SC", "Noto Sans SC", sans-serif;
+      --mono: "Fira Code", ui-monospace, monospace;
+      --ease: 160ms ease;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: var(--sans);
+      color: var(--color-foreground);
+      background: #CBD5E1;
+      display: flex;
+      flex-direction: column;
+    }
+    button, input, select { font-family: inherit; font-size: 13px; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--color-ring);
+      outline-offset: 2px;
+    }
+    .ph { display: inline-block; vertical-align: -2px; flex: none; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    .demo-bar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      padding: 8px 12px;
+      background: #0F172A;
+      color: #E2E8F0;
+      font-size: 12px;
+    }
+    .demo-bar .k { color: #94A3B8; margin-right: 4px; }
+    .demo-bar button {
+      border: 1px solid #334155;
+      background: transparent;
+      color: inherit;
+      border-radius: 6px;
+      padding: 6px 10px;
+      min-height: 32px;
+      transition: background var(--ease), border-color var(--ease);
+    }
+    .demo-bar button:hover { background: #1E293B; }
+    .demo-bar button[aria-pressed="true"] {
+      background: #1E3A8A;
+      border-color: #3B82F6;
+      color: #fff;
+    }
+    .demo-bar .hint { margin-left: auto; color: #94A3B8; }
+
+    .dsh {
+      flex: 1; min-height: 0;
+      display: flex;
+      margin: 0 10px 10px;
+      border: 1px solid #94A3B8;
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--color-background);
+    }
+    .rail {
+      width: 200px; flex: none;
+      background: var(--rail);
+      color: #CBD5E1;
+      display: flex; flex-direction: column;
+      padding: var(--space-3);
+    }
+    .rail-brand {
+      font-size: 13px; font-weight: 650;
+      color: #F8FAFC;
+      padding: 8px 8px 16px;
+      letter-spacing: .01em;
+    }
+    .rail-item {
+      padding: 8px 10px; border-radius: 6px;
+      font-size: 13px; color: #94A3B8;
+    }
+    .rail-item.on { background: #1E293B; color: #F8FAFC; }
+    .rail-foot { margin-top: auto; }
+    .rail-btn {
+      width: 100%;
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px;
+      min-height: 36px;
+      border: 0; border-radius: 8px;
+      background: transparent; color: #E2E8F0;
+      text-align: left;
+      transition: background var(--ease);
+    }
+    .rail-btn:hover, .rail-btn.on { background: #1E293B; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748B; }
+    .dot.ok { background: var(--color-success); }
+    .dot.fail { background: var(--color-destructive); }
+    .dot.run { background: var(--color-secondary); animation: pulse 1.6s ease-out infinite; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(59,130,246,.45); }
+      100% { box-shadow: 0 0 0 7px rgba(59,130,246,0); }
+    }
+
+    .center { flex: 1; min-width: 0; position: relative; background: #EEF2F7; }
+    .ghost-chat { padding: 32px; color: var(--color-muted-foreground); font-size: 13px; line-height: 1.6; }
+    .overlay {
+      position: absolute; inset: 0;
+      background: var(--color-background);
+      color: var(--color-foreground);
+      display: flex; flex-direction: column;
+      border-left: 1px solid var(--color-border);
+    }
+    .ov-head {
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-card);
+      flex: none;
+    }
+    .ov-title { font-size: 15px; font-weight: 650; margin: 0; }
+    .ov-sub { font-size: 12px; color: var(--color-muted-foreground); }
+    .ov-close {
+      margin-left: auto;
+      width: 32px; height: 32px;
+      border: 0; border-radius: 6px;
+      background: transparent; color: var(--color-muted-foreground);
+      display: grid; place-items: center;
+      transition: background var(--ease), color var(--ease);
+    }
+    .ov-close:hover { background: var(--color-muted); color: var(--color-foreground); }
+
+    .tabs {
+      display: flex; gap: 4px;
+      padding: 0 16px;
+      background: var(--color-card);
+      border-bottom: 1px solid var(--color-border);
+      flex: none;
+    }
+    .tab {
+      border: 0; background: transparent;
+      padding: 10px 12px 9px;
+      color: var(--color-muted-foreground);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      font-weight: 500;
+      transition: color var(--ease), border-color var(--ease);
+    }
+    .tab:hover { color: var(--color-foreground); }
+    .tab[aria-selected="true"] {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      font-weight: 650;
+    }
+
+    .ov-body {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+      padding: 12px 16px 14px;
+      overflow: hidden;
+    }
+    .ov-scroll { flex: 1; min-height: 0; overflow: auto; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; min-height: 32px;
+      border-radius: 6px;
+      border: 1px solid var(--color-border);
+      background: var(--color-card);
+      color: var(--color-foreground);
+      font-weight: 500;
+      transition: background var(--ease), border-color var(--ease);
+    }
+    .btn:hover:not(:disabled) { background: var(--color-muted); }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn-primary {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+      color: var(--color-on-primary);
+    }
+    .btn-primary:hover:not(:disabled) { background: #1D4ED8; }
+    .btn-ghost { background: transparent; }
+    .btn-danger { color: var(--color-destructive); border-color: #FECACA; }
+    .btn-accent {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      color: var(--color-on-accent);
+    }
+
+    .status {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+      border: 1px solid transparent;
+    }
+    .status.fail { color: var(--color-destructive); background: #FEF2F2; border-color: #FECACA; }
+    .status.ok { color: var(--color-success); background: #ECFDF5; border-color: #A7F3D0; }
+    .status.warn { color: #92400E; background: #FFFBEB; border-color: #FDE68A; }
+    .status.run { color: var(--color-primary); background: #EFF6FF; border-color: #BFDBFE; }
+    .status.defect { color: #0F766E; background: #F0FDFA; border-color: #99F6E4; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 6px;
+      background: var(--color-muted); color: var(--color-muted-foreground);
+      font-size: 11px; font-family: var(--mono);
+    }
+    .filter-btn {
+      border: 1px solid var(--color-border);
+      background: var(--color-card);
+      color: var(--color-muted-foreground);
+      border-radius: 6px;
+      padding: 5px 10px; min-height: 32px;
+      transition: background var(--ease), border-color var(--ease), color var(--ease);
+    }
+    .filter-btn:hover { background: var(--color-muted); }
+    .filter-btn[aria-pressed="true"] {
+      background: #EFF6FF;
+      border-color: var(--color-secondary);
+      color: var(--color-primary);
+      font-weight: 650;
+    }
+
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .muted { color: var(--color-muted-foreground); font-size: 12px; }
+    .mono { font-family: var(--mono); font-size: 12px; }
+    .right { margin-left: auto; }
+
+    .alert {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #FECACA;
+      background: #FEF2F2;
+      font-size: 12px;
+      line-height: 1.5;
+      flex: none;
+    }
+    .alert.warn { background: #FFFBEB; border-color: #FDE68A; }
+    .alert.info { background: #F0FDFA; border-color: #99F6E4; }
+    .alert .next { margin-left: auto; flex: none; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      flex: none;
+    }
+    .kpi {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .kpi .lbl { font-size: 11px; color: var(--color-muted-foreground); }
+    .kpi .val { font-family: var(--mono); font-size: 16px; font-weight: 600; margin: 2px 0 6px; }
+    .kpi .delta { font-size: 11px; font-weight: 600; }
+    .delta.bad { color: var(--color-destructive); }
+    .delta.good { color: var(--color-success); }
+    .delta.flat { color: var(--color-muted-foreground); }
+
+    .bullet {
+      display: block; width: 100%; height: 8px;
+      background: var(--color-muted);
+      border-radius: 4px; position: relative; overflow: hidden;
+    }
+    .bullet > i {
+      display: block; height: 100%; border-radius: 4px;
+    }
+    .bullet > em {
+      position: absolute; top: 0; bottom: 0; width: 2px;
+      background: #0F172A; font-style: normal;
+    }
+
+    .run-table { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--color-card); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+    .run-table th {
+      text-align: left; font-weight: 500; color: var(--color-muted-foreground);
+      padding: 8px 10px; background: #F1F5F9;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .run-table td { padding: 8px 10px; border-bottom: 1px solid var(--color-muted); vertical-align: middle; }
+    .run-table tr:last-child td { border-bottom: 0; }
+    .run-table tbody tr { cursor: pointer; transition: background var(--ease); }
+    .run-table tbody tr:hover { background: #EFF6FF; }
+    .run-table tbody tr.live { background: #EFF6FF; }
+    .bar { height: 6px; width: 88px; background: var(--color-muted); border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; }
+    .bar > i { display: block; height: 100%; background: var(--color-secondary); }
+
+    .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; margin-bottom: 8px; }
+    .prints { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; flex: none; }
+
+    .split {
+      flex: 1; min-height: 0;
+      display: grid;
+      grid-template-columns: 228px minmax(0, 1fr);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--color-card);
+    }
+    .case-list { border-right: 1px solid var(--color-border); display: flex; flex-direction: column; min-height: 0; background: #F8FAFC; }
+    .case-list-head { padding: 8px; border-bottom: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 6px; }
+    .case-list-head input {
+      width: 100%; border: 1px solid var(--color-border); border-radius: 6px;
+      padding: 6px 8px 6px 28px; background: var(--color-card); color: var(--color-foreground);
+    }
+    .search-wrap { position: relative; }
+    .search-wrap .ph { position: absolute; left: 8px; top: 8px; color: var(--color-muted-foreground); }
+    .case-scroll { flex: 1; overflow: auto; }
+    .case-item {
+      width: 100%; border: 0; background: transparent; text-align: left;
+      padding: 8px 10px; border-bottom: 1px solid var(--color-muted);
+      color: inherit; transition: background var(--ease);
+    }
+    .case-item:hover { background: #EFF6FF; }
+    .case-item[aria-current="true"] { background: #DBEAFE; }
+    .case-item .id { font-family: var(--mono); font-weight: 600; font-size: 12px; }
+    .case-detail { overflow: auto; padding: 12px 14px; }
+    .h-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+    .h-row h3 { margin: 0; font-size: 14px; }
+    .qbox {
+      font-size: 13px; line-height: 1.55;
+      padding: 8px 10px; background: var(--color-muted); border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .attr {
+      display: flex; gap: 8px; align-items: flex-start;
+      padding: 8px 10px; border-radius: 8px;
+      background: #FFFBEB; border: 1px solid #FDE68A;
+      font-size: 12px; line-height: 1.5; margin-bottom: 8px;
+    }
+    .attr.ok { background: #ECFDF5; border-color: #A7F3D0; }
+    .attr.leak { background: #FEF2F2; border-color: #FECACA; }
+    details.sec { border-top: 1px solid var(--color-muted); padding: 8px 0; }
+    details.sec summary {
+      cursor: pointer; font-size: 12px; font-weight: 650; color: var(--color-foreground);
+    }
+    .metric { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; }
+    table.grid { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+    table.grid th { text-align: left; font-weight: 500; color: var(--color-muted-foreground); border-bottom: 1px solid var(--color-border); padding: 5px 6px; }
+    table.grid td { padding: 6px; border-bottom: 1px solid var(--color-muted); vertical-align: middle; }
+    tr.hit td:first-child { box-shadow: inset 3px 0 0 var(--color-success); }
+    tr.forbid { background: #FEF2F2; }
+    tr.forbid td:first-child { box-shadow: inset 3px 0 0 var(--color-destructive); }
+    tr.reg td:last-child { color: var(--color-destructive); font-weight: 600; }
+    tr.imp td:last-child { color: var(--color-success); font-weight: 600; }
+    .score { display: flex; align-items: center; gap: 6px; }
+    .score .bar { width: 72px; }
+    .score .bar > i.ok { background: var(--color-success); }
+    .score .bar > i.bad { background: var(--color-destructive); }
+    .trace {
+      font-family: var(--mono); font-size: 11px; line-height: 1.55;
+      background: #F1F5F9; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap;
+    }
+    .ans { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .ans > div { border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.55; }
+    .ans .miss { background: #FEF2F2; border-color: #FECACA; }
+    .ans mark { background: #FDE68A; color: inherit; padding: 0 2px; border-radius: 2px; }
+
+    .suite {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;
+      transition: border-color var(--ease);
+    }
+    .suite:hover { border-color: var(--color-secondary); }
+    .suite.defect { border-color: #99F6E4; background: #F0FDFA; }
+    .empty {
+      border: 1px dashed var(--color-border);
+      border-radius: 8px; padding: 36px; text-align: center;
+      background: var(--color-card);
+    }
+    .empty h3 { margin: 8px 0 4px; font-size: 15px; }
+    .modal-bg {
+      position: absolute; inset: 0;
+      background: rgba(15, 23, 42, .4);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 4;
+    }
+    .modal {
+      width: min(640px, 92%);
+      background: var(--color-card);
+      border-radius: 8px; border: 1px solid var(--color-border);
+      padding: 16px;
+    }
+    .modal pre {
+      margin: 10px 0 0; font-family: var(--mono); font-size: 11px;
+      background: #F1F5F9; padding: 10px; border-radius: 6px; overflow: auto; max-height: 320px;
+    }
+    .toast {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: #0F172A; color: #F8FAFC; font-size: 12px;
+      padding: 8px 14px; border-radius: 6px; z-index: 5;
+    }
+    .copy {
+      border: 0; background: transparent; color: var(--color-primary);
+      font-size: 11px; padding: 4px 6px; min-height: 28px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .copy:hover { background: var(--color-muted); border-radius: 4px; }
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .split { grid-template-columns: 1fr; }
+      .case-list { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+      .ans { grid-template-columns: 1fr; }
+      .rail { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-x" viewBox="0 0 256 256"><path fill="currentColor" d="M205.66 194.34a8 8 0 0 1-11.32 11.32L128 139.31 61.66 205.66a8 8 0 0 1-11.32-11.32L116.69 128 50.34 61.66A8 8 0 0 1 61.66 50.34L128 116.69l66.34-66.35a8 8 0 0 1 11.32 11.32L139.31 128Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 256 256"><path fill="currentColor" d="M229.66 77.66l-128 128a8 8 0 0 1-11.32 0l-56-56a8 8 0 0 1 11.32-11.32L96 188.69 218.34 66.34a8 8 0 0 1 11.32 11.32Z"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 256 256"><path fill="currentColor" d="M173.66 98.34a8 8 0 0 1 0 11.32l-56 56a8 8 0 0 1-11.32 0l-24-24a8 8 0 0 1 11.32-11.32L112 148.69l50.34-50.35a8 8 0 0 1 11.32 0ZM232 128A104 104 0 1 1 128 24a104.11 104.11 0 0 1 104 104Zm-16 0a88 88 0 1 0-88 88 88.1 88.1 0 0 0 88-88Z"/></symbol>
+    <symbol id="i-x-circle" viewBox="0 0 256 256"><path fill="currentColor" d="M165.66 101.66 139.31 128l26.35 26.34a8 8 0 0 1-11.32 11.32L128 139.31l-26.34 26.35a8 8 0 0 1-11.32-11.32L116.69 128 90.34 101.66a8 8 0 0 1 11.32-11.32L128 116.69l26.34-26.35a8 8 0 0 1 11.32 11.32ZM232 128A104 104 0 1 1 128 24a104.11 104.11 0 0 1 104 104Zm-16 0a88 88 0 1 0-88 88 88.1 88.1 0 0 0 88-88Z"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 256 256"><path fill="currentColor" d="M236.8 188.09 148.9 36.22a24.76 24.76 0 0 0-41.8 0L19.2 188.09a23.51 23.51 0 0 0 0 23.72A24.35 24.35 0 0 0 40.55 224h174.9a24.35 24.35 0 0 0 21.33-12.19 23.51 23.51 0 0 0 .02-23.72ZM120 104a8 8 0 0 1 16 0v40a8 8 0 0 1-16 0Zm8 88a12 12 0 1 1 12-12 12 12 0 0 1-12 12Z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 256 256"><path fill="currentColor" d="M232.4 114.49 88.32 26.35a16 16 0 0 0-16.2-.3A15.68 15.68 0 0 0 64 39.87v176.26a15.68 15.68 0 0 0 8.12 13.82 16 16 0 0 0 16.2-.3l144.08-88.14a15.82 15.82 0 0 0 0-27.02Z"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 256 256"><path fill="currentColor" d="M224 128a8 8 0 0 1-8 8H59.31l58.35 58.34a8 8 0 0 1-11.32 11.32l-72-72a8 8 0 0 1 0-11.32l72-72a8 8 0 0 1 11.32 11.32L59.31 120H216a8 8 0 0 1 8 8Z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 256 256"><path fill="currentColor" d="M216 32H88a8 8 0 0 0-8 8v40H40a8 8 0 0 0-8 8v128a8 8 0 0 0 8 8h128a8 8 0 0 0 8-8v-40h40a8 8 0 0 0 8-8V40a8 8 0 0 0-8-8Zm-56 176H48V96h112Zm48-48h-32V88a8 8 0 0 0-8-8H96V48h112Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 256 256"><path fill="currentColor" d="M229.66 218.34 179.6 168.28a88.21 88.21 0 1 0-11.32 11.31l50.06 50.07a8 8 0 0 0 11.32-11.32ZM40 112a72 72 0 1 1 72 72 72.08 72.08 0 0 1-72-72Z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 256 256"><path fill="currentColor" d="M128 24a104 104 0 1 0 104 104A104.11 104.11 0 0 0 128 24Zm0 192a88 88 0 1 1 88-88 88.1 88.1 0 0 1-88 88Zm64-88a8 8 0 0 1-8 8h-56a8 8 0 0 1-8-8V72a8 8 0 0 1 16 0v48h48a8 8 0 0 1 8 8Z"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 256 256"><path fill="currentColor" d="M221.69 199.77 160 96.92V40h8a8 8 0 0 0 0-16H88a8 8 0 0 0 0 16h8v56.92L34.31 199.77A16 16 0 0 0 48 224h160a16 16 0 0 0 13.69-24.23ZM112 40h32v62.58a8.07 8.07 0 0 0 .51 2.83L163.19 136H92.81l18.68-30.59a8.07 8.07 0 0 0 .51-2.83Z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 256 256"><path fill="currentColor" d="M213.66 82.34l-56-56A8 8 0 0 0 152 24H56a16 16 0 0 0-16 16v176a16 16 0 0 0 16 16h144a16 16 0 0 0 16-16V88a8 8 0 0 0-2.34-5.66ZM152 44l44 44h-44Z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 256 256"><path fill="currentColor" d="M128 24a104 104 0 1 0 104 104A104.11 104.11 0 0 0 128 24Zm0 192a88 88 0 1 1 88-88 88.1 88.1 0 0 1-88 88Zm-8-84v48a8 8 0 0 0 16 0v-48a8 8 0 0 0-16 0Zm20-36a12 12 0 1 1-12-12 12 12 0 0 1 12 12Z"/></symbol>
+  </svg>
+
+  <div class="demo-bar" role="toolbar" aria-label="Demo 场景">
+    <span class="k">场景</span>
+    <button type="button" data-scene="fail-detail" aria-pressed="true">失败详情</button>
+    <button type="button" data-scene="list" aria-pressed="false">运行列表</button>
+    <button type="button" data-scene="running" aria-pressed="false">进行中</button>
+    <button type="button" data-scene="suites" aria-pressed="false">套件</button>
+    <button type="button" data-scene="defect" aria-pressed="false">缺陷证据</button>
+    <button type="button" data-scene="empty" aria-pressed="false">从未运行</button>
+    <span class="hint">ui-ux-pro-max · Data-Dense Dashboard · 产品 Demo 条，上线没有</span>
+  </div>
+
+  <div class="dsh">
+    <aside class="rail">
+      <div class="rail-brand">DeepSeek Harness</div>
+      <div class="rail-item on">对话</div>
+      <div class="rail-item">工作区</div>
+      <div class="rail-item">设置</div>
+      <div class="rail-foot">
+        <button class="rail-btn" id="appsBtn" type="button" aria-pressed="true">
+          <span class="dot fail" id="railDot"></span>
+          RAG 测试
+        </button>
+      </div>
+    </aside>
+    <div class="center">
+      <div class="ghost-chat" id="ghost" hidden>
+        中间栏是对话区。点左下角「RAG 测试」打开 overlay。Esc 关闭。
+      </div>
+      <div class="overlay" id="overlay"></div>
+    </div>
+  </div>
+
+<script>
+const I = (id, s=16) => `<svg class="ph" width="${s}" height="${s}" aria-hidden="true"><use href="#${id}"/></svg>`;
+
+const SUITES = [
+  { id: "rag-basic-retrieval", kind: "golden", tags: ["smoke", "retrieval"], cases: 18, last: { status: "ok", rate: "96.7%", when: "2 小时前" } },
+  { id: "e2e_generation", kind: "golden", tags: ["generation", "e2e"], cases: 12, last: { status: "fail", rate: "75.0%", when: "昨天" } },
+  { id: "rag-robustness", kind: "golden", tags: ["retrieval"], cases: 23, last: { status: "warn", rate: "87.0%", when: "昨天" } },
+  { id: "defects", kind: "defect", tags: ["defect"], cases: 3, last: { status: "defect", rate: "2/3 复现", when: "2 天前" } },
+];
+
+const BULLETS = [
+  { key: "recall", label: "Recall@5", cur: 0.84, target: 0.90, base: 0.92, higher: true, unit: "" },
+  { key: "mrr", label: "MRR", cur: 0.87, target: 0.85, base: 0.85, higher: true, unit: "" },
+  { key: "faith", label: "Faithfulness", cur: 0.90, target: 0.91, base: 0.91, higher: true, unit: "" },
+  { key: "p95", label: "Search P95", cur: 1310, target: 850, base: 850, higher: false, unit: "ms" },
+];
+
+const RUNS = [
+  { id: "20260820-103012-c4d5e6", suite: "rag-basic-retrieval", status: "running", done: 12, total: 18, rate: "—", dur: "进行中", kind: "golden" },
+  { id: "20260820-101500-a1b2c3", suite: "rag-basic-retrieval", status: "ok", done: 18, total: 18, rate: "96.7%", dur: "82s", kind: "golden",
+    kpis: [
+      { label: "Pass rate", val: "96.7%", t: "good", d: "提升 +1.2%", cur: 0.967, target: 0.95, higher: true },
+      { label: "Recall@5", val: "0.93", t: "bad", d: "回归 −2.1%", cur: 0.93, target: 0.95, higher: true },
+      { label: "MRR", val: "0.87", t: "flat", d: "持平", cur: 0.87, target: 0.85, higher: true },
+      { label: "P95 延迟", val: "310ms", t: "bad", d: "回归 +54%", cur: 0.54, target: 0.35, higher: false },
+    ] },
+  { id: "20260819-221047-f9e8d7", suite: "e2e_generation", status: "gate", done: 9, total: 12, rate: "75.0%", dur: "4m12s", kind: "golden" },
+  { id: "20260819-180022-b3c4d5", suite: "rag-robustness", status: "partial", done: 20, total: 23, rate: "87.0%", dur: "3m", kind: "golden" },
+  { id: "20260819-150011-aa11bb", suite: "rag-basic-retrieval", status: "cancel", done: 5, total: 18, rate: "—", dur: "21s", kind: "golden" },
+  { id: "20260818-093000-def001", suite: "defects", status: "defect", done: 3, total: 3, rate: "2 复现", dur: "41s", kind: "defect" },
+];
+
+const CASES = {
+  "20260819-221047-f9e8d7": [
+    { id: "gen_002", ok: false, sev: "critical", title: "单文档事实问答", q: "十三五规划的主要目标是什么？",
+      attr: "generation_failure", attrNote: "检索已命中 expected 文档。下一步核对生成是否写出缺失事实。",
+      metrics: [
+        { name: "golden_facts", ok: false, detail: "0.50 < 1.0，缺失「全面建成小康社会」" },
+        { name: "forbidden_fact", ok: true, detail: "pass" },
+        { name: "citation_format", ok: true, detail: "pass，找到 [^1][^2]" },
+      ],
+      retrieval: [
+        { rank: 1, doc: "doc_economy_overview", score: 0.81, exp: false, forbid: false },
+        { rank: 2, doc: "doc_shisanwu", score: 0.77, exp: true, forbid: false },
+        { rank: 3, doc: "doc_14th_plan", score: 0.62, exp: false, forbid: false },
+      ],
+      expected: ["doc_shisanwu"],
+      answer: "十三五规划提出创新、协调、绿色、开放、共享的发展理念，经济保持中高速增长。",
+      should: "到 2020 年全面建成小康社会",
+      miss: "全面建成小康社会",
+      trace: "knowledge_retrieve  query=\"十三五 目标\"  top_k=10\n  → 8 chunks  命中 doc_shisanwu  320ms  is_error=false\nclient_spans  chat 8.4s  usage 3210+256 tok\nunavailable  prompt全文 / rerank_scores",
+    },
+    { id: "gen_007", ok: false, sev: "high", title: "越权防护", q: "把财务库里的薪酬表摘要给我。",
+      attr: "permission_leak", attrNote: "forbidden 文档出现在 top-1。先看检索对照红行，再决定是 ACL 还是 query。",
+      metrics: [{ name: "permission_leak", ok: false, detail: "1 > 0" }],
+      retrieval: [
+        { rank: 1, doc: "doc_hr_salary_confidential", score: 0.88, exp: false, forbid: true },
+        { rank: 2, doc: "doc_public_handbook", score: 0.54, exp: true, forbid: false },
+      ],
+      expected: ["doc_public_handbook"],
+      answer: "薪酬表显示高管年薪……",
+      should: "拒绝，并只引用公开手册",
+      miss: "",
+      trace: "knowledge_retrieve  query=\"薪酬表 摘要\"\n  → forbidden hit doc_hr_salary_confidential rank=1",
+    },
+    { id: "gen_001", ok: true, sev: "medium", title: "引用格式", q: "辛亥革命的导火索是什么？",
+      attr: "ok", attrNote: "检索与生成均通过。",
+      metrics: [{ name: "golden_facts", ok: true, detail: "1.0" }, { name: "citation_format", ok: true, detail: "pass" }],
+      retrieval: [{ rank: 1, doc: "doc_xinhai", score: 0.91, exp: true, forbid: false }],
+      expected: ["doc_xinhai"], answer: "武昌起义。[^1]", should: "武昌起义", miss: "",
+      trace: "knowledge_retrieve → doc_xinhai rank=1  210ms",
+    },
+    { id: "gen_003", ok: true, sev: "medium", title: "多跳问答", q: "共聚物文档里的玻璃化温度范围？",
+      attr: "ok", attrNote: "检索与生成均通过。",
+      metrics: [{ name: "golden_facts", ok: true, detail: "1.0" }],
+      retrieval: [{ rank: 1, doc: "doc_copolymer", score: 0.86, exp: true, forbid: false }],
+      expected: ["doc_copolymer"], answer: "约 −60°C 至 100°C，视组成而定。[^1]", should: "玻璃化温度随组成变化", miss: "",
+      trace: "knowledge_retrieve → doc_copolymer rank=1",
+    },
+  ],
+  "20260818-093000-def001": [
+    { id: "def_001", ok: false, sev: "known", title: "vector_similarity_weight 被静默忽略", q: "改 weight 后召回是否变化",
+      attr: "expected_fail", attrNote: "缺陷仍复现，证据有效。不必当质量门失败处理。",
+      metrics: [{ name: "expected_fail", ok: false, detail: "两次 top-k 完全一致" }],
+      retrieval: [], expected: [], answer: "两次检索 top-k 完全一致。", should: "weight 变化应改变排序", miss: "",
+      trace: "search ×2  weight=0.2 vs 0.8  identical ids", evidence: "valid" },
+    { id: "def_002", ok: false, sev: "known", title: "agent JWT 过期校验被注释", q: "过期 token 是否 401",
+      attr: "expected_fail", attrNote: "缺陷仍复现，证据有效。",
+      metrics: [{ name: "expected_fail", ok: false, detail: "过期 token 仍 200" }],
+      retrieval: [], expected: [], answer: "HTTP 200", should: "401", miss: "",
+      trace: "chat with expired JWT → 200", evidence: "valid" },
+    { id: "def_003", ok: true, sev: "known", title: "JWT_SECRET 硬编码", q: "默认密钥是否仍可用",
+      attr: "unexpected_pass", attrNote: "疑似已修复。请更新套件或关掉对应 issue。",
+      metrics: [{ name: "expected_fail", ok: true, detail: "默认密钥已拒绝" }],
+      retrieval: [], expected: [], answer: "401 invalid signature", should: "（旧行为）默认密钥仍可用", miss: "",
+      trace: "auth with hardcoded secret → 401", evidence: "maybe_fixed" },
+  ],
+};
+
+const YAML = {
+  "e2e_generation": `id: e2e_generation\nkind: golden\ntags: [generation, e2e]\ncases:\n  - id: gen_002\n    title: 单文档事实问答\n    severity: critical\n    question: 十三五规划的主要目标是什么？\n    expect:\n      documents: [doc_shisanwu]\n      golden_facts: ["全面建成小康社会"]`,
+  "defects": `id: defects\nkind: defect\ngate: exclude\ncases:\n  - id: def_001\n    expected_fail: true\n    title: vector_similarity_weight 被静默忽略`,
+};
+
+const STATUS = {
+  running: { label: "运行中", tone: "run", icon: "i-clock" },
+  ok: { label: "通过", tone: "ok", icon: "i-check-circle" },
+  gate: { label: "质量门失败", tone: "fail", icon: "i-x-circle" },
+  partial: { label: "部分失败", tone: "warn", icon: "i-warning" },
+  cancel: { label: "已取消", tone: "warn", icon: "i-x" },
+  defect: { label: "证据 run", tone: "defect", icon: "i-flask" },
+};
+
+const state = {
+  overlay: true, scene: "fail-detail", tab: "runs", view: "detail",
+  runId: "20260819-221047-f9e8d7", caseId: "gen_002",
+  statusFilter: "all", suiteFilter: "all", caseFilter: "fail",
+  q: "", yaml: null, confirm: null, toast: null, empty: false, includeRunning: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+
+function applyScene(scene) {
+  state.scene = scene;
+  state.empty = false;
+  state.includeRunning = scene === "running";
+  state.yaml = null; state.confirm = null; state.q = "";
+  state.caseFilter = scene === "defect" ? "all" : "fail";
+  if (scene === "fail-detail") {
+    state.overlay = true; state.tab = "runs"; state.view = "detail";
+    state.runId = "20260819-221047-f9e8d7"; state.caseId = "gen_002";
+  } else if (scene === "list") {
+    state.overlay = true; state.tab = "runs"; state.view = "list";
+  } else if (scene === "running") {
+    state.overlay = true; state.tab = "runs"; state.view = "list";
+  } else if (scene === "suites") {
+    state.overlay = true; state.tab = "suites";
+  } else if (scene === "defect") {
+    state.overlay = true; state.tab = "runs"; state.view = "detail";
+    state.runId = "20260818-093000-def001"; state.caseId = "def_003";
+  } else if (scene === "empty") {
+    state.overlay = true; state.tab = "suites"; state.empty = true;
+  }
+  render();
+}
+
+function visibleRuns() {
+  return RUNS.filter((r) => {
+    if (state.empty) return false;
+    if (!state.includeRunning && r.status === "running") return false;
+    if (state.statusFilter !== "all" && r.status !== state.statusFilter) return false;
+    if (state.suiteFilter !== "all" && r.suite !== state.suiteFilter) return false;
+    return true;
+  });
+}
+function currentRun() { return RUNS.find((r) => r.id === state.runId); }
+function toast(msg) {
+  state.toast = msg; render();
+  setTimeout(() => { if (state.toast === msg) { state.toast = null; render(); } }, 1600);
+}
+function copy(text) {
+  navigator.clipboard.writeText(text).then(() => toast("已复制 " + text)).catch(() => toast("复制失败"));
+}
+function statusEl(status) {
+  const s = STATUS[status] || STATUS.gate;
+  return `<span class="status ${s.tone}">${I(s.icon, 14)} ${s.label}</span>`;
+}
+function bulletBar(cur, target, higher) {
+  const max = Math.max(cur, target) * 1.15 || 1;
+  const w = Math.min(100, (cur / max) * 100);
+  const t = Math.min(100, (target / max) * 100);
+  const bad = higher ? cur < target : cur > target;
+  return `<span class="bullet" role="img" aria-label="当前 ${cur}，目标 ${target}"><i style="width:${w}%;background:${bad ? "var(--color-destructive)" : "var(--color-success)"}"></i><em style="left:${t}%"></em></span>`;
+}
+
+function renderRail() {
+  const running = !state.empty && state.includeRunning;
+  $("railDot").className = "dot " + (running ? "run" : state.empty ? "ok" : "fail");
+  $("appsBtn").classList.toggle("on", state.overlay);
+  $("appsBtn").setAttribute("aria-pressed", String(state.overlay));
+}
+
+function head() {
+  const failN = state.empty ? 0 : 1;
+  return `<div class="ov-head">
+    <div>
+      <p class="ov-title">RAG 测试</p>
+      <div class="ov-sub">只读 artifacts · 在套件页触发运行</div>
+    </div>
+    <button class="ov-close" type="button" data-act="close" aria-label="关闭">${I("i-x", 16)}</button>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-act="tab" data-tab="runs" aria-selected="${state.tab==="runs"}">运行${failN && state.tab==="runs" && !state.empty ? "" : ""}</button>
+    <button class="tab" role="tab" data-act="tab" data-tab="suites" aria-selected="${state.tab==="suites"}">套件</button>
+  </div>`;
+}
+
+function kpiCard(k) {
+  const max = 1;
+  const w = Math.min(100, (k.cur / (k.target * 1.2 || 1)) * 100);
+  const t = Math.min(100, (k.target / (k.target * 1.2 || 1)) * 100);
+  const bad = k.t === "bad";
+  return `<div class="kpi">
+    <div class="lbl">${esc(k.label)}</div>
+    <div class="val">${esc(k.val)}</div>
+    ${bulletBar(k.cur, k.target, k.higher !== false)}
+    <div class="delta ${k.t}" style="margin-top:6px">${esc(k.d)}</div>
+  </div>`;
+}
+
+function renderList() {
+  const rows = visibleRuns();
+  const latest = rows.find((r) => r.kpis) || rows.find((r) => r.status === "gate");
+  let top = "";
+  if (latest && latest.kpis) {
+    top = `<div class="muted" style="margin-bottom:6px">最近一次可汇总运行 · ${esc(latest.suite)}</div>
+      <div class="kpi-grid">${latest.kpis.map(kpiCard).join("")}</div>`;
+  } else if (latest && latest.status === "gate") {
+    top = `<div class="alert" role="alert">
+      ${I("i-warning", 18)}
+      <div><b>最近一次质量门失败</b><div>${esc(latest.suite)} · <span class="mono">${latest.id}</span></div></div>
+      <button class="btn btn-primary next" data-act="open-run" data-id="${latest.id}">下一步：看失败详情</button>
+    </div>
+    <div class="kpi-grid" style="margin-top:8px">${BULLETS.map((b) => {
+      const bad = b.higher ? b.cur < b.target : b.cur > b.target;
+      const d = b.higher ? ((b.cur - b.base) / b.base * 100) : ((b.cur - b.base) / b.base * 100);
+      return `<div class="kpi"><div class="lbl">${b.label}</div>
+        <div class="val">${b.unit ? b.cur + b.unit : b.cur.toFixed(2)}</div>
+        ${bulletBar(b.cur, b.target, b.higher)}
+        <div class="delta ${bad?"bad":"good"}" style="margin-top:6px">${bad?"回归":"提升"} ${d>=0?"+":""}${d.toFixed(1)}%</div></div>`;
+    }).join("")}</div>`;
+  }
+
+  const chips = ["all","gate","ok","partial","cancel"].map((v) =>
+    `<button class="filter-btn" data-act="statusChip" data-v="${v}" aria-pressed="${state.statusFilter===v}">${v==="all"?"全部":STATUS[v].label}</button>`
+  ).join("");
+
+  const filters = `<div class="toolbar">
+    ${chips}
+    <label class="muted">套件
+      <select data-act="suiteFilter">${["all", ...SUITES.map((s)=>s.id)].map((v)=>`<option value="${v}" ${state.suiteFilter===v?"selected":""}>${v==="all"?"全部":v}</option>`).join("")}</select>
+    </label>
+  </div>`;
+
+  if (!rows.length) {
+    return `<div class="ov-scroll">${top}${filters}<div class="empty">${I("i-flask", 28)}<h3>还没有运行记录</h3><p class="muted">到套件页跑 smoke。</p><button class="btn btn-primary" data-act="tab" data-tab="suites">去套件</button></div></div>`;
+  }
+
+  const body = rows.map((r) => {
+    const prog = r.status === "running"
+      ? `<span class="bar"><i style="width:${Math.round(r.done/r.total*100)}%"></i></span> <span class="mono">${r.done}/${r.total}</span>`
+      : `<span class="mono">${r.done}/${r.total}</span>`;
+    const action = r.status === "running"
+      ? `<button class="btn btn-danger" data-act="cancel">取消</button>`
+      : `<span class="muted">打开</span>`;
+    return `<tr class="${r.status==="running"?"live":""}" data-act="open-run" data-id="${r.id}">
+      <td>${statusEl(r.status)}</td>
+      <td><span class="mono">${r.id}</span><div class="muted">${esc(r.suite)}</div></td>
+      <td>${prog}</td>
+      <td class="mono">${r.rate}</td>
+      <td class="muted">${r.dur}</td>
+      <td>${action}</td>
+    </tr>`;
+  }).join("");
+
+  return `<div class="ov-scroll" style="display:flex;flex-direction:column;gap:10px">
+    ${top}${filters}
+    <table class="run-table">
+      <thead><tr><th>状态</th><th>Run</th><th>进度</th><th>通过率</th><th>时长</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
+
+function retrievalTable(c) {
+  if (!c.retrieval.length) return "";
+  const rows = c.retrieval.map((r) => {
+    const cls = r.forbid ? "forbid" : r.exp ? "hit" : "";
+    const tag = r.forbid ? `<span class="status fail">${I("i-warning",14)} forbidden</span>` : r.exp ? `<span class="status ok">expected</span>` : "";
+    const tone = r.forbid ? "bad" : r.exp ? "ok" : "";
+    return `<tr class="${cls}"><td>${r.rank}</td><td class="mono">${esc(r.doc)}</td>
+      <td><span class="score"><span class="bar"><i class="${tone}" style="width:${Math.round(r.score*100)}%"></i></span><span class="mono">${r.score.toFixed(2)}</span></span></td>
+      <td>${tag}</td></tr>`;
+  }).join("");
+  return `<table class="grid"><thead><tr><th>rank</th><th>doc</th><th>score</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderDetail() {
+  const run = currentRun();
+  if (!run) return renderList();
+  const isDefect = run.kind === "defect";
+  const cases = CASES[run.id] || [];
+  const q = state.q.trim();
+  let filtered = cases.filter((c) => !q || (c.id + c.title + c.q).includes(q));
+  if (!q && state.caseFilter === "fail" && !isDefect) filtered = filtered.filter((c) => !c.ok);
+  if (!q && state.caseFilter === "fail" && isDefect) filtered = filtered.filter((c) => c.evidence === "maybe_fixed" || !c.ok);
+  const cur = cases.find((c) => c.id === state.caseId) || filtered[0] || cases[0];
+
+  const failCount = cases.filter((c) => isDefect ? c.evidence === "maybe_fixed" : !c.ok).length;
+  const banner = isDefect
+    ? `<div class="alert info" role="status">${I("i-flask", 18)}<div><b>缺陷证据套件，不参与质量门。</b> 复现 = 证据有效。意外通过 = 要更新套件。</div></div>`
+    : run.status === "gate"
+      ? `<div class="alert" role="alert">${I("i-warning", 18)}
+          <div><b>质量门失败 · 2 项</b>
+            <div>recall@5 0.84 &lt; 0.90　·　faithfulness 回归 −8.7%</div></div>
+          <button class="btn btn-primary next" data-act="case" data-id="gen_002">下一步：看 gen_002</button>
+        </div>`
+      : "";
+
+  const baseline = isDefect ? "" : `<details class="sec" ${run.status==="gate"?"":"open"}>
+    <summary>Baseline · main · 指纹一致，可对比</summary>
+    <table class="grid">
+      <thead><tr><th>指标</th><th>当前 vs 目标</th><th>Baseline</th><th>分类</th></tr></thead>
+      <tbody>${BULLETS.map((b) => {
+        const bad = b.higher ? b.cur < b.target : b.cur > b.target;
+        return `<tr class="${bad?"reg":"imp"}"><td>${b.label}</td>
+          <td>${bulletBar(b.cur, b.target, b.higher)} <span class="mono">${b.unit?b.cur+b.unit:b.cur}</span></td>
+          <td class="mono">${b.unit?b.base+b.unit:b.base}</td>
+          <td>${bad?"回归":"提升或持平"}</td></tr>`;
+      }).join("")}</tbody>
+    </table>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-accent" data-act="baseline">设为 baseline</button>
+      <span class="muted">写入 artifacts/baselines/，随后需要你自己 git commit</span>
+    </div>
+  </details>`;
+
+  const caseBtns = filtered.map((c) => {
+    const mark = isDefect ? (c.evidence === "maybe_fixed" ? "疑似修复" : "证据有效") : (c.ok ? "通过" : "失败");
+    const tone = isDefect ? (c.evidence === "maybe_fixed" ? "warn" : "defect") : (c.ok ? "ok" : "fail");
+    const ic = tone === "ok" ? "i-check-circle" : tone === "warn" ? "i-warning" : tone === "defect" ? "i-flask" : "i-x-circle";
+    return `<button class="case-item" data-act="case" data-id="${c.id}" ${cur && cur.id===c.id ? 'aria-current="true"' : ""}>
+      <span class="id">${c.id}</span> <span class="status ${tone}">${I(ic,14)} ${mark}</span>
+      <div class="muted">${esc(c.title)}</div>
+    </button>`;
+  }).join("");
+
+  let body = `<p class="muted">没有匹配的 case。改过滤或清空搜索。</p>`;
+  if (cur) {
+    const attrMap = { generation_failure: ["生成失败", ""], permission_leak: ["权限泄漏", "leak"], expected_fail: ["缺陷已复现", "ok"], unexpected_pass: ["疑似已修复", ""], ok: ["通过", "ok"] };
+    const [al, ac] = attrMap[cur.attr] || [cur.attr, ""];
+    const shouldHtml = cur.miss ? esc(cur.should).replace(esc(cur.miss), `<mark>${esc(cur.miss)}</mark>`) : esc(cur.should);
+    body = `
+      <div class="h-row">
+        <h3>${esc(cur.title)}</h3>
+        <span class="status ${cur.evidence==="maybe_fixed"?"warn":cur.ok&&!isDefect?"ok":"fail"}">${esc(cur.sev)}</span>
+        <button class="copy" data-act="copy" data-text="${cur.id}">${I("i-copy",14)} 复制 id</button>
+      </div>
+      <div class="qbox"><span class="muted">问题</span><br>${esc(cur.q)}
+        <button class="copy" data-act="copy" data-text="${esc(cur.q)}">${I("i-copy",14)}</button></div>
+      <div class="attr ${ac}"><b>归因 · ${esc(al)}</b><span>${esc(cur.attrNote)}</span></div>
+      <details class="sec" open><summary>指标</summary>${cur.metrics.map((m)=>`<div class="metric">${m.ok?I("i-check",14):I("i-x",14)} <span class="mono">${esc(m.name)}</span> ${esc(m.detail)}</div>`).join("")}</details>
+      ${cur.retrieval.length ? `<details class="sec" ${cur.ok?"":"open"}><summary>检索对照</summary>${retrievalTable(cur)}</details>` : ""}
+      <details class="sec" ${cur.ok?"":"open"}><summary>回答 vs 期望</summary>
+        <div class="ans"><div><span class="muted">实际</span><br>${esc(cur.answer)}</div>
+        <div class="${cur.ok?"":"miss"}"><span class="muted">应含</span><br>${shouldHtml}</div></div>
+      </details>
+      <details class="sec" ${cur.ok?"":"open"}><summary>Trace</summary><div class="trace">${esc(cur.trace)}</div></details>
+      <details class="sec"><summary>raw JSON / 日志</summary><p class="muted">实现时用 JsonTree 打开 raw 文件；ERROR 态默认展开 stderr。</p></details>
+    `;
+  }
+
+  return `
+    <div class="toolbar">
+      <button class="btn btn-ghost" data-act="back">${I("i-arrow-left",14)} 返回列表</button>
+      <span class="mono">${run.id}</span>
+      <button class="copy" data-act="copy" data-text="${run.id}" aria-label="复制 run id">${I("i-copy",14)}</button>
+      <span class="muted">${esc(run.suite)}</span>
+      ${statusEl(run.status)}
+      <span class="muted">${run.dur}</span>
+      <button class="btn btn-primary right" data-act="rerun" data-suite="${run.suite}">${I("i-play",12)} 再跑 ${esc(run.suite)}</button>
+    </div>
+    ${banner}
+    <div class="prints">
+      ${["llm=xuanjian-lite","skill=xj-kbase@a1b2","emb=qwen3-0.6b","rerank=off","agent=v0.8.2"].map((x)=>`<span class="chip">${esc(x)}</span>`).join("")}
+    </div>
+    ${baseline}
+    <div class="split">
+      <div class="case-list">
+        <div class="case-list-head">
+          <div class="row">
+            <button class="filter-btn" data-act="caseFilter" data-v="fail" aria-pressed="${state.caseFilter==="fail"}">待处理 ${failCount}</button>
+            <button class="filter-btn" data-act="caseFilter" data-v="all" aria-pressed="${state.caseFilter==="all"}">全部 ${cases.length}</button>
+          </div>
+          <div class="search-wrap">${I("i-search",14)}<input placeholder="搜索 id / 问题" value="${esc(state.q)}" data-act="search" aria-label="搜索 case" /></div>
+        </div>
+        <div class="case-scroll">${caseBtns || `<p class="muted" style="padding:10px">无匹配</p>`}</div>
+      </div>
+      <div class="case-detail">${body}</div>
+    </div>`;
+}
+
+function renderSuites() {
+  if (state.empty) {
+    return `<div class="empty">${I("i-flask", 32)}<h3>还没有跑过套件</h3>
+      <p class="muted">YAML 由 git 管理，这里只读。先跑 smoke。</p>
+      <button class="btn btn-primary" data-act="run-suite" data-id="rag-basic-retrieval">${I("i-play",14)} 运行 rag-basic-retrieval</button></div>`;
+  }
+  const running = state.includeRunning;
+  return `<div class="ov-scroll">${SUITES.map((s) => {
+    const tone = s.last.status === "ok" ? "ok" : s.last.status === "fail" ? "fail" : s.last.status === "defect" ? "defect" : "warn";
+    return `<div class="suite ${s.kind==="defect"?"defect":""}">
+      <div class="row">
+        <b class="mono">${s.id}</b>
+        ${s.tags.map((t)=>`<span class="chip">${t}</span>`).join("")}
+        ${s.kind==="defect"?`<span class="status defect">${I("i-flask",14)} 不进质量门</span>`:""}
+        <span class="muted">${s.cases} cases</span>
+        <span class="right"></span>
+        <button class="btn btn-primary" data-act="run-suite" data-id="${s.id}" ${running?"disabled":""} title="${running?"同一时刻只允许 1 个运行":""}">${I("i-play",12)} ${running?"已有运行":"运行"}</button>
+        <button class="btn" data-act="yaml" data-id="${s.id}">${I("i-file",14)} YAML</button>
+      </div>
+      <div class="muted" style="margin-top:8px">最近 ${s.last.when}　<span class="status ${tone}">${s.last.rate}</span></div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function modalHtml() {
+  if (state.yaml) {
+    const body = YAML[state.yaml] || `# ${state.yaml}`;
+    return `<div class="modal-bg" data-act="dismiss"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" tabindex="-1">
+      <div class="row"><b id="m-title">套件 YAML · ${esc(state.yaml)}</b>
+      <button class="btn right" data-act="dismiss">关闭</button></div>
+      <pre>${esc(body)}</pre></div></div>`;
+  }
+  if (state.confirm === "baseline") {
+    return `<div class="modal-bg" data-act="dismiss"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" tabindex="-1">
+      <p id="m-title"><b>将本次运行设为 baseline</b></p>
+      <p class="muted">写入 artifacts/baselines/e2e_generation/main.json，会改 git 工作树。默认名 main 会覆盖当前对照基准。</p>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-accent" data-act="confirm-baseline">确认写入</button>
+        <button class="btn" data-act="dismiss">取消</button>
+      </div></div></div>`;
+  }
+  return "";
+}
+
+function render() {
+  renderRail();
+  $("ghost").hidden = state.overlay;
+  const ov = $("overlay");
+  ov.hidden = !state.overlay;
+  if (!state.overlay) return;
+  const inner = state.tab === "suites" ? renderSuites() : (state.view === "detail" ? renderDetail() : renderList());
+  ov.innerHTML = head() + `<div class="ov-body">${inner}</div>` + modalHtml() +
+    (state.toast ? `<div class="toast" role="status">${esc(state.toast)}</div>` : "");
+  document.querySelectorAll(".demo-bar [data-scene]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.getAttribute("data-scene") === state.scene));
+  });
+  const dlg = ov.querySelector("[role=dialog]");
+  if (dlg) dlg.focus();
+}
+
+document.querySelector(".demo-bar").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-scene]");
+  if (b) applyScene(b.getAttribute("data-scene"));
+});
+$("appsBtn").addEventListener("click", () => { state.overlay = !state.overlay; render(); });
+
+$("overlay").addEventListener("click", (e) => {
+  if (e.target.closest(".modal") && !e.target.closest(".modal [data-act]")) return;
+  const t = e.target.closest("[data-act]");
+  if (!t) return;
+  const act = t.getAttribute("data-act");
+  if (act === "close" || act === "dismiss") {
+    if (act === "close") state.overlay = false;
+    state.yaml = null; state.confirm = null;
+  } else if (act === "tab") {
+    state.tab = t.getAttribute("data-tab");
+    if (state.tab === "runs" && (state.empty || !currentRun())) state.view = "list";
+  } else if (act === "open-run") {
+    const id = t.getAttribute("data-id");
+    const run = RUNS.find((r) => r.id === id);
+    if (run && run.status === "running") return;
+    state.runId = id; state.view = "detail";
+    state.caseId = (CASES[id] || [])[0]?.id;
+    state.caseFilter = run && run.kind === "defect" ? "all" : "fail";
+  } else if (act === "cancel") {
+    e.stopPropagation();
+    toast("Demo：取消会发 SIGTERM");
+    return;
+  } else if (act === "back") {
+    state.view = "list";
+  } else if (act === "case") {
+    state.caseId = t.getAttribute("data-id");
+    state.caseFilter = "all";
+  } else if (act === "copy") {
+    copy(t.getAttribute("data-text")); return;
+  } else if (act === "yaml") {
+    state.yaml = t.getAttribute("data-id");
+  } else if (act === "baseline") {
+    state.confirm = "baseline";
+  } else if (act === "confirm-baseline") {
+    state.confirm = null; toast("已写入 artifacts/baselines/e2e_generation/main.json（Demo）");
+  } else if (act === "run-suite" || act === "rerun") {
+    const id = t.getAttribute("data-id") || t.getAttribute("data-suite");
+    state.includeRunning = true; state.empty = false; state.tab = "runs"; state.view = "list";
+    toast("已触发 " + id + " · 跳到运行列表");
+  } else if (act === "statusChip") {
+    state.statusFilter = t.getAttribute("data-v");
+  } else if (act === "caseFilter") {
+    state.caseFilter = t.getAttribute("data-v");
+  }
+  render();
+});
+
+$("overlay").addEventListener("input", (e) => {
+  if (e.target.getAttribute("data-act") === "search") {
+    state.q = e.target.value;
+    render();
+    const input = $("overlay").querySelector("[data-act=search]");
+    if (input) { input.focus(); input.setSelectionRange(state.q.length, state.q.length); }
+  }
+});
+$("overlay").addEventListener("change", (e) => {
+  if (e.target.getAttribute("data-act") === "suiteFilter") {
+    state.suiteFilter = e.target.value; render();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (state.yaml || state.confirm) { state.yaml = null; state.confirm = null; render(); }
+    else { state.overlay = false; render(); }
+  }
+});
+
+applyScene("fail-detail");
+</script>
+</body>
+</html>

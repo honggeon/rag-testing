@@ -17,6 +17,7 @@
 |---|---|
 | [docs/architecture-review.md](docs/architecture-review.md) | 架构评审主文档（决策记录 / Adapter 契约 / Schema / 里程碑） |
 | [docs/architecture-review-audit.md](docs/architecture-review-audit.md) | 架构评审意见（P0/P1/P2，已全部合入 v0.3） |
-| [docs/ui-design.md](docs/ui-design.md) | DSH 插件 UI 设计（M5：菜单入口 + 全屏页五 Tab） |
+| [docs/ui-design.md](docs/ui-design.md) | DSH 插件 UI 交互设计（M5：菜单入口 + 全屏页五 Tab） |
+| [docs/frontend-design.md](docs/frontend-design.md) | 前端工程设计（组件树 / store / api 层 / 装配与验收） |
 | [docs/dsh-architecture-analysis.md](docs/dsh-architecture-analysis.md) | DeepSeek Harness 插件机制分析 |
 | [docs/xuanjian-agent-analysis.md](docs/xuanjian-agent-analysis.md) | 被测 Agent 问答链路分析 |
