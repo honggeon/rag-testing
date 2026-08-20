@@ -80,7 +80,8 @@ window.__ModuleLoader__.load({
       },
       listeners: new Set(),
       set(patch) {
-        Object.assign(this.state, patch);
+        // useSyncExternalStore 用 Object.is 比较快照：必须返回新引用才会重渲染
+        this.state = Object.assign({}, this.state, patch);
         this.listeners.forEach(function (fn) { fn(); });
       },
       subscribe(fn) {
