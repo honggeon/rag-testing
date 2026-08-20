@@ -16,10 +16,12 @@ from ragtest.adapters.base import (
 from ragtest.evaluators import get_evaluator
 from ragtest.models import CaseStatus
 from ragtest.models.result import (
+    AgentToolCallRecord,
     AssertionRecord,
     CaseError,
     CaseResult,
     ChunkSnapshot,
+    GenerationSnapshot,
     MetricResult,
     RetrievalSnapshot,
     Span,
@@ -36,6 +38,8 @@ async def execute_case(
     kb: KBHandle,
     doc_id_to_logical: dict[str, str],
     raw_dir: Path | None = None,
+    chat_adapter=None,             # M4：ChatPort + TracePort（target=xuanjian）
+    target_config: dict | None = None,
 ) -> CaseResult:
     """执行单个 case。expect_error / A-B 对比 / expected 三条互斥路径；
     expected_fail（defect 证据）在出口统一做语义反转（P1-3）。"""
@@ -51,6 +55,12 @@ async def execute_case(
 
     if case.expect_error:
         result = await _execute_expect_error(case, base, adapter=adapter, session=session, kb=kb)
+    elif chat_adapter is not None and (case.input.question or case.input.query):
+        result = await _execute_generation(
+            case, base, chat_adapter=chat_adapter, identity=session.identity, kb=kb,
+            target_config=target_config or {}, doc_id_to_logical=doc_id_to_logical,
+            raw_dir=raw_dir,
+        )
     elif case.input_b is not None:
         result = await _execute_ab(
             case, base, adapter=adapter, session=session, kb=kb,
@@ -245,3 +255,108 @@ async def _execute_retrieval(
     effective = [m for m in metrics if not m.skipped]
     base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
     return base
+
+
+# ── 生成路径（M4，target=xuanjian）──────────────────────────────────────────
+
+
+def compute_attribution(case: GoldenCase, result: CaseResult) -> str:
+    """E2E 归因（架构 §6.3）：routing_failure / retrieval_miss / generation_failure / ok。"""
+    calls = [t for t in result.trace.agent_tool_calls if t.tool == "knowledge_retrieve"]
+    if not calls:
+        return "routing_failure"
+    total_chunks = sum(t.chunk_count or 0 for t in calls)
+    expected = set(case.expected.documents) if case.expected else set()
+    hit_docs = set().union(*(set(t.hit_doc_ids) for t in calls)) if calls else set()
+    # hit_doc_ids 已由 executor 映射为 logical_id
+    if total_chunks == 0 or (expected and not (expected & hit_docs)):
+        return "retrieval_miss"
+    gen_failed = any(
+        m.category == "generation" and not m.passed and not m.skipped
+        for m in result.metrics
+    )
+    return "generation_failure" if gen_failed else "ok"
+
+
+async def _execute_generation(
+    case: GoldenCase, base: CaseResult, *, chat_adapter, identity, kb,
+    target_config: dict, doc_id_to_logical: dict[str, str], raw_dir: Path | None,
+) -> CaseResult:
+    """E2E 问答路径：create_session → chat → collect_agent_trace → evaluators → 归因。
+    会话在 finally 中删除（每 case 独立会话，防历史污染）。"""
+    from ragtest.adapters.base import ChatRequest
+
+    chat_session = None
+    started = time.perf_counter()
+    try:
+        chat_session = await chat_adapter.create_session(identity)
+        request = ChatRequest(
+            question=case.input.question or case.input.query or "",
+            skill=target_config.get("skill", "xj-kbase"),
+            kb_id_inject=kb.kb_id if target_config.get("kb_id_inject", True) else None,
+            model=target_config.get("model"),
+            timeout_s=case.timeout_s or target_config.get("timeout_s", 300),
+        )
+        chat_result = await chat_adapter.chat(chat_session, request)
+
+        base.generation = GenerationSnapshot(
+            answer=chat_result.answer,
+            usage=chat_result.usage,
+            latency_ms=chat_result.latency_ms,
+        )
+
+        # TracePort：归因证据（session.messages 主路径）
+        tool_calls = await chat_adapter.collect_agent_trace(chat_session, chat_result)
+        # document_id → logical_id 映射（归因用逻辑 id 与 expected 对比）
+        records = [
+            AgentToolCallRecord(
+                tool=t.tool,
+                args=t.args,
+                chunk_count=t.chunk_count,
+                hit_doc_ids=[doc_id_to_logical.get(d, d) for d in t.hit_doc_ids],
+                duration_ms=t.duration_ms,
+                is_error=t.is_error,
+                source=t.source,
+            )
+            for t in tool_calls
+        ]
+        base.trace = TraceInfo(
+            client_spans=[Span(name="chat", duration_ms=int((time.perf_counter() - started) * 1000))],
+            server_signals={"usage": chat_result.usage or {}},
+            agent_tool_calls=records,
+            unavailable=["prompt", "rerank_scores"],
+        )
+
+        if raw_dir is not None:
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            raw_file = raw_dir / f"{case.id}.chat.json"
+            raw_file.write_text(json.dumps(chat_result.raw, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+
+        metrics: list[MetricResult] = []
+        for spec in case.evaluators:
+            try:
+                metric = get_evaluator(spec.name)(case, base, spec.params)
+            except Exception as e:  # noqa: BLE001
+                metric = MetricResult(name=spec.name, passed=False, category="error",
+                                      detail=f"evaluator 异常: {e}")
+            metrics.append(metric)
+        base.metrics = metrics
+
+        # 归因（在 metrics 之后，需要 generation 指标结果）
+        base.trace.attribution = compute_attribution(case, base)
+        # 回填 retrieval_attribution 指标详情（该指标在归因计算前执行）
+        for m in base.metrics:
+            if m.name == "retrieval_attribution":
+                m.detail = f"归因: {base.trace.attribution}"
+
+        effective = [m for m in metrics if not m.skipped]
+        base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
+        return base
+    except AdapterError as e:
+        base.status = CaseStatus.ERROR
+        base.error = CaseError(kind=e.kind.value, message=e.message)
+        return base
+    finally:
+        if chat_session is not None:
+            await chat_adapter.delete_session(chat_session)

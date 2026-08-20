@@ -352,8 +352,13 @@ class AragAdapter:
                 raise
 
     async def cleanup(self, session: Session, lease: RunLease) -> None:
-        """按逆序释放资源：documents → knowledge_bases → users。
-        单资源失败不阻断后续清理（残留由调用方记录）。
+        """单会话全量清理（兼容用法）。docs/KB 与 users 属主不同时请用拆分方法：
+        cleanup_resources（资源属主会话）+ cleanup_users（admin 会话）。"""
+        await self.cleanup_resources(session, lease)
+        await self.cleanup_users(session, lease)
+
+    async def cleanup_resources(self, session: Session, lease: RunLease) -> None:
+        """documents → knowledge_bases（需资源属主会话：不能删除他人的个人知识库）。
         文档删除是异步的（Deleting→Deleted），KB 在文档未删净时拒绝删除
         （400 存在处理中的文档）→ KB 删除做短 backoff 重试。"""
         for kb, doc in reversed(lease.documents):
@@ -362,7 +367,13 @@ class AragAdapter:
             except AdapterError:
                 pass
         for kb in reversed(lease.knowledge_bases):
-            await self._delete_kb_with_retry(session, kb)
+            try:
+                await self._delete_kb_with_retry(session, kb)
+            except AdapterError:
+                pass
+
+    async def cleanup_users(self, session: Session, lease: RunLease) -> None:
+        """users（需 admin 会话）。"""
         for identity in reversed(lease.users):
             try:
                 await self.delete_user(session, identity)

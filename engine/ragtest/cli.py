@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ragtest.adapters.arag import AragAdapter
 from ragtest.adapters.base import Identity
+from ragtest.adapters.xuanjian import XuanjianAgentAdapter
 from ragtest.artifacts import RunStatusWriter
 from ragtest.assets import AssetError, load_suite
 from ragtest.baseline import compare, load_baseline, save_baseline
@@ -76,11 +77,17 @@ async def _run(args: argparse.Namespace) -> int:
         email=settings.arag_admin_email, password=settings.arag_admin_password,
     )
 
+    # target adapter（M4）：suite.adapters.target == xuanjian 时启用 E2E 生成
+    target_adapter = None
+    if suite.adapters.target == "xuanjian":
+        target_adapter = XuanjianAgentAdapter(settings.agent_base_url)
+
     async with AragAdapter(settings.arag_base_url, settings.arag_auth_url) as adapter:
         runner = SuiteRunner(
             suite=suite, dataset=dataset, dataset_base=dataset_base, adapter=adapter,
             admin_identity=admin_identity, run_id=run_id, writer=writer,
             repo_root=REPO_ROOT, ingest_timeout_s=args.ingest_timeout,
+            target_adapter=target_adapter,
         )
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

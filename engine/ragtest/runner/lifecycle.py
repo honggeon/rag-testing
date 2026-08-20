@@ -63,6 +63,7 @@ class SuiteRunner:
         writer: RunStatusWriter,
         repo_root: Path,
         ingest_timeout_s: float = 600.0,
+        target_adapter=None,              # M4：ChatPort/TracePort（xuanjian）；None=纯检索
     ):
         self.suite = suite
         self.dataset = dataset
@@ -79,6 +80,8 @@ class SuiteRunner:
         self.doc_id_to_logical: dict[str, str] = {}
         self._cancelled = False
         self._heartbeat_task: asyncio.Task | None = None
+        self._target_adapter = target_adapter
+        self._sessions: dict[str, Session] = {}
 
     # ── 生命周期记录 ──────────────────────────────────────────────────────
 
@@ -119,11 +122,12 @@ class SuiteRunner:
         suite = self.suite
 
         # LOGIN：admin + 各 identity（含动态建用户与 IdentityBinding 回写）
+        # 注意：owner 也可以是 create: true 的测试用户（配额隔离场景，如 a100 的 ops 配额已满）
         self._enter(RunState.LOGIN)
         admin_session = await self.adapter.login(self.admin_identity)
         sessions: dict[str, Session] = {}
         for name, spec in suite.identities.items():
-            if name == "owner" or spec.role == "admin":
+            if spec.role == "admin":
                 sessions[name] = admin_session
                 continue
             identity = Identity(
@@ -135,6 +139,7 @@ class SuiteRunner:
             await self.adapter.ensure_user(admin_session, identity)
             self.lease.users.append(identity)
             sessions[name] = await self.adapter.login(identity)
+        self._sessions = sessions
 
         owner = sessions.get("owner", admin_session)
 
@@ -233,7 +238,9 @@ class SuiteRunner:
                 continue
             result = await execute_case(
                 case, adapter=self.adapter, session=session, kb=kb,
-                doc_id_to_logical=self.doc_id_to_logical, raw_dir=raw_dir)
+                doc_id_to_logical=self.doc_id_to_logical, raw_dir=raw_dir,
+                chat_adapter=self._target_adapter,
+                target_config=self.suite.target_config)
             self.run.cases.append(result)
 
         # EVALUATE（指标已在 case 内计算，这里做汇总）
@@ -285,12 +292,22 @@ class SuiteRunner:
         self.run.summary = summary
 
     async def _cleanup(self) -> None:
-        """RunLease 逆序清理（评审 P1-2）：documents → KB → users。必达。"""
+        """RunLease 逆序清理（评审 P1-2）：agent sessions → documents → KB → users。必达。
+        会话选择：docs/KB 用属主会话（不能删他人个人 KB），users 用 admin 会话。"""
         self.writer.update(RunState.CLEANUP, message="清理测试资源")
         self.run.lifecycle.append(LifecycleEntry(state=RunState.CLEANUP.value, at=_now()))
         try:
+            # agent 会话清理（M4 target adapter；失败不阻断）
+            if self._target_adapter is not None:
+                for chat_session in reversed(self.lease.agent_sessions):
+                    try:
+                        await self._target_adapter.delete_session(chat_session)
+                    except Exception:  # noqa: BLE001
+                        pass
             admin_session = await self.adapter.login(self.admin_identity)
-            await self.adapter.cleanup(admin_session, self.lease)
+            owner_session = getattr(self, "_sessions", {}).get("owner", admin_session)
+            await self.adapter.cleanup_resources(owner_session, self.lease)
+            await self.adapter.cleanup_users(admin_session, self.lease)
         except AdapterError as e:
             self.run.lifecycle.append(LifecycleEntry(
                 state=RunState.CLEANUP.value, at=_now(), ok=False,

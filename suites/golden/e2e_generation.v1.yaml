@@ -1,0 +1,78 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-e2e-generation
+name: 端到端 RAG 问答（arag 制备 + xuanjian-agent 生成）
+tags: [generation, e2e]
+
+dataset:
+  ref: ../datasets/basic/dataset.yaml
+
+adapters:
+  provisioning: arag        # a100 的 arag（agent 经 9360 网关访问同一套）
+  target: xuanjian
+
+target_config:
+  skill: xj-kbase
+  kb_id_inject: true        # 注入确定性检索指令（P0-3）
+  timeout_s: 300
+
+knowledge_base:
+  name_prefix: ragtest-e2e
+  kb_type: personal          # owner 为新建测试用户（a100 的 ops 配额已满，见 M4 记录）
+
+identities:
+  # a100 ops 配额耗尽 → owner 用新建测试用户（个人 KB 隔离 + 配额干净）
+  owner: {role: user, create: true, grant_level: null}
+
+identity_binding:
+  strategy: provisioning_writeback   # agent X-USER-ID = arag user_id
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4
+    reranker_enabled: true
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+  generation:
+    llm_model: qwen3.6-35b           # a100 vLLM（OpenAI 兼容）
+    llm_base_url: http://114.214.255.153:7500/v1
+    skill: {name: xj-kbase, version: "1.0.1"}
+    agent_version: "未确认（a100 原生进程，2026-08-12 启动）"
+    knowledge_base_url: http://114.214.255.153:9360
+    reasoning_effort: minimal
+
+cases:
+  - id: gen_001
+    name: 单文档事实问答（共聚物定义）
+    tags: [generation, e2e, smoke]
+    severity: critical
+    identity: owner
+    input:
+      question: "什么是共聚物？它有哪些主要分类？"
+    expected:
+      documents: [doc_copolymer]
+      golden_facts: ["两种或两种以上"]
+      forbidden_facts: ["共聚物是天然产物"]
+    evaluators:
+      - {name: golden_facts, threshold: 1.0}
+      - {name: forbidden_fact}
+      - {name: retrieval_attribution}
+      - {name: e2e_latency, threshold_ms: 120000}
+
+  - id: gen_002
+    name: 历史事实问答 + 引用格式（辛亥革命）
+    tags: [generation, e2e]
+    severity: major
+    identity: owner
+    input:
+      question: "辛亥革命是在哪一年、从哪里爆发的？它有什么历史意义？"
+    expected:
+      documents: [doc_xinhai]
+      golden_facts: ["武昌"]
+    evaluators:
+      - {name: golden_facts, threshold: 1.0}
+      - {name: citation_format, threshold: 1.0}
+      - {name: retrieval_attribution}
+      - {name: e2e_latency, threshold_ms: 120000}

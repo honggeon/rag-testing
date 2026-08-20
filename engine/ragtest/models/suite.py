@@ -135,6 +135,7 @@ class GoldenSuite(BaseModel):
     knowledge_base: KBSpecYaml = Field(default_factory=KBSpecYaml)
     identities: dict[str, IdentitySpec] = Field(default_factory=dict)
     identity_binding: dict[str, Any] = Field(default_factory=dict)
+    target_config: dict[str, Any] = Field(default_factory=dict)  # skill/model/kb_id_inject 等
     environment_fingerprint: FingerprintSpec = Field(default_factory=FingerprintSpec)
     quality_gate: dict[str, Any] = Field(default_factory=dict)
     cases: list[GoldenCase]
