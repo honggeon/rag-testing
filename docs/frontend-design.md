@@ -70,9 +70,9 @@ OverlayRoot                       ← shell.overlay；始终挂载，store.ui.op
 ├─ TabNav                         ← 5 tab；active 来自 store.ui.tab
 └─ TabPanel
    ├─ OverviewTab
-   │  ├─ KpiRow        ×5（KpiCard：value + BaselineDelta 徽标）
-   │  ├─ TrendStrip    ×2（字符火花线，无图表库）
-   │  └─ FailureList   → 点击跳 RunDetailTab（store.ui 联动）
+   │  ├─ BulletRow      ×5（BulletChart：当前值 vs baseline/阈值的紧凑条形——overlay.md 规则，**不用大数字英雄卡**）
+   │  ├─ TrendStrip    ×2（轻量 SVG 折线，无图表库）
+   │  └─ FailureList   → 点击跳 RunDetailView（store.ui 联动）
    ├─ RunsTab
    │  ├─ FilterBar（状态/套件下拉）
    │  ├─ RunningCard（置顶；ProgressBar + CancelButton；2s 轮询）
@@ -141,7 +141,22 @@ api = {
 
 - `injectCss()`：单 `<style>` 标签注入（agentloop 同范式），所有类名加 `rt-` 前缀避免污染 DSH
 - 布局：CSS grid/flex 手写；**不引 CSS 框架**
-- 色彩：尽量吃 DSH 主题变量（`var(--dsh-*)`，先查 ui-primitives 实际变量名，实现时核对），状态色固定语义：pass=绿 / fail=红 / warn=黄 / running=蓝 / skipped=灰
+- **设计 token 以 design-system 为准**（`design-system/rag-testing/MASTER.md` + `pages/overlay.md`），注入为 CSS 变量：
+
+```css
+.rt-overlay {
+  --color-primary: #1E40AF;  --color-secondary: #3B82F6;
+  --color-destructive: #DC2626;  /* 失败/回归：文案+图标，不只靠颜色 */
+  --color-success: #047857;      /* 通过/提升 */
+  --color-accent: #D97706;       /* 需要人处理：意外通过、设 baseline */
+  --color-background: #F8FAFC; --color-card: #FFFFFF;
+  /* 缺陷证据：secondary + 横幅「不进质量门」，不用失败红 */
+}
+```
+
+- 密度：9/10（8px 节奏、表格行高 32-40px、panel padding 12-16px、radius 4/6/8px）
+- 动效：仅 150–200ms hover/进度条；`prefers-reduced-motion: reduce` 时停脉冲动画
+- **a11y（overlay.md 强制）**：交互芯片用 `<button aria-pressed>`（禁止可点 div）；质量门横幅 `role="alert"` 且带「下一步」跳失败 case；Modal `role="dialog"` + 可见焦点；**Esc 分层**——先关 Modal，再关 overlay
 - JsonTree（raw 查看）、StateDot（状态点）、TerminalBlock（spawn 错误 stderr）、Modal（YAML 预览）、Pill（tag/徽章）直接用 ui-primitives
 
 ## 6. 关键交互实现要点
@@ -171,7 +186,11 @@ api = {
 4. store.js（useSyncExternalStore）
 5. poller.js
 6. utils（格式化时长/百分比/delta 着色/逻辑 doc 映射）
-7. 原子组件（KpiCard / StatePill / ProgressBar / TrendStrip / DeltaBadge）
+7. 原子组件（Icon / BulletChart / StatePill / ProgressBar / TrendStrip / DeltaBadge）
+   - Icon：**内联 SVG 的 Phosphor outline 子集**（~12 个：check/x/warning/spinner/flag/chart/
+     clock/download/copy/filter/search/chevron）——手写 bundle 无构建，直接内嵌 SVG path，
+     **禁止 emoji 当状态**（design-system overlay.md 规则）
+   - BulletChart：当前值条形 + baseline 标记线 + 阈值刻度，等宽字体数值
 8. 视图组件（五个 Tab + RunDetailView + CaseDetail 两种）
 9. OverlayRoot / MenuButton
 10. injectCss
@@ -188,6 +207,17 @@ api = {
 4. 失败 case 详情：检索类出 Expected/Actual 对照；E2E 类出归因 + tool_calls 时间线（M4 后）
 5. Baseline 页 diff 着色正确；incomparable 横幅在指纹不一致时出现
 6. HMR 下改 client.js 自动重载不白屏；刷新页面后 overlay 默认关闭、数据可重新拉取
+
+**场景验收（转写自 `docs/ui-demo.html` 六场景，逐条人工核对）**：
+
+| # | 场景 | 通过标准 |
+|---|---|---|
+| S1 | 失败详情 | gate 横幅 `role="alert"` + 违规规则 + 「下一步」跳第一个失败 case；详情三栏联动 |
+| S2 | 运行列表 | 终态图标正确（非 emoji）；状态/套件过滤生效 |
+| S3 | 进行中 | 进度卡 2s 刷新；僵死（heartbeat>30s）出黄徽章；取消后落 CANCELLED |
+| S4 | 套件 | 卡片信息完整；「运行」为 Primary CTA；YAML Modal Esc 分层正确 |
+| S5 | 缺陷证据 | 顶部「不进质量门」横幅；expected_fail 状态用 secondary 色而非失败红 |
+| S6 | 从未运行 | 空态引导卡 + 一键运行 smoke 套件 |
 
 ---
 

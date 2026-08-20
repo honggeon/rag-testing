@@ -3,8 +3,16 @@
 > 版本：v0.2（对应架构 v0.3 §4.2/§15-M5；补充 Run Detail / 失败诊断 Demo）
 > 日期：2026-08-20
 > 形态：**`sidebar.footer.action` 菜单按钮 + `shell.overlay` 全屏页**（参照 dsh-agentloop）
-> 技术约束：client bundle 为手写 `window.__ModuleLoader__.load` 格式 React；无 URL 路由（页内 tab 状态管理）；组件用 `@deepseek-ai/dsh-client-ui-primitives`（Button/Pill/Modal/Input/Toast/JsonTree/StateDot/TerminalBlock 等）；数据全部来自 host 半 HTTP 路由（§5 数据契约），不直连引擎。
+> 技术约束：client bundle 为手写 `window.__ModuleLoader__.load` 格式 React；无 URL 路由（页内 tab 状态管理）；组件用 `@deepseek-ai/dsh-client-ui-primitives`（Button/Pill/Modal/Input/Toast/JsonTree/StateDot/TerminalBlock 等）；数据全部来自 host 半 HTTP 路由（§9 数据契约），不直连引擎。
 > 前端原型：[`docs/rag-run-detail-demo.html`](rag-run-detail-demo.html)（单 HTML，可直接打开，用于评审运行详情信息架构与交互）
+>
+> **文档权威层级（2026-08-20 裁决）**：
+> 1. **本文档** = 信息架构（5 Tab）+ 页面内容 + 数据契约的权威来源；
+> 2. `design-system/rag-testing/MASTER.md` + `pages/overlay.md` = 视觉 token / 密度 / 图标 / a11y / 动效规则的权威来源（页面规则覆盖 MASTER）；
+> 3. `docs/frontend-design.md` = 工程实现（组件树 / store / api 层 / 装配）；
+> 4. `docs/ui-demo.html`、`docs/run-detail-demo.html` = 交互场景参考原型；
+> 5. `docs/rag-run-detail-demo.html` = **远期独立平台形态参考，非 M5 目标**。
+> 冲突时按 1 → 2 → 3 顺序裁决。
 
 ---
 

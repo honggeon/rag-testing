@@ -12,9 +12,9 @@
 ### Layout Overrides
 
 - **形态：** 侧栏 footer 入口 + 中间栏全屏 overlay，不遮挡 DSH 侧栏
-- **导航：** 两 Tab：运行 / 套件。无全局「套件选择器 + 运行」
-- **默认落地：** 上次 golden 质量门失败的 run 详情，并选中第一个失败 case
-- **主从：** 左 case 列表（默认过滤失败）+ 右详情。详情区独立滚动
+- **导航：** **5 Tab（总览 / 运行记录 / 测试套件 / Baseline / 缺陷套件）——信息架构以 `docs/ui-design.md` v0.2 为准**（2026-08-20 裁决，替代此前"两 Tab"规则）；顶栏套件选择器 + 运行按钮沿用 ui-design.md §3
+- **默认落地：** 总览页；若存在最近一次质量门失败的 run，总览「最近失败 Case」区一键直达失败诊断（ui-design.md §4）
+- **主从：** 运行详情内 左 Case Navigator（默认过滤失败）+ 中 Case Detail + 右 Evaluation 三栏（18/52/30），详情区独立滚动（ui-design.md §5.2.4）
 - **Max Width:** overlay 铺满中间栏，不做 1400px 居中
 
 ### Spacing Overrides
