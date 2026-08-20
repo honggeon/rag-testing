@@ -627,26 +627,8 @@ window.__ModuleLoader__.load({
     }
 
     // =====================================================================
-    // 菜单按钮（sidebar.footer.action）
+    // 入口：经由 agentloop「菜单」下拉的 RAG 测试 条目（window.__RAG_TESTING_OPEN__）打开
     // =====================================================================
-    function MenuButton() {
-      var s = useStore();
-      // 最近 run 状态点
-      var latest = s.runs[0];
-      var dotColor = s.runningId ? "#3B82F6"
-        : latest ? stateMeta(latest.state).color : "#9ca3af";
-      useEffect(function () {
-        api.runs().then(function (d) { store.set({ runs: d.runs || [] }); }).catch(function () {});
-      }, []);
-      return h("button", {
-        className: "rt-menu-btn",
-        onClick: function () { store.set({ open: !s.open }); },
-        title: "RAG 测试",
-      },
-        h("span", { className: "rt-dot", style: { background: dotColor } }),
-        "RAG 测试");
-    }
-
     // =====================================================================
     // 样式（design-system token：密度 9/10、8px 节奏、Phosphor 前禁 emoji）
     // =====================================================================
@@ -727,14 +709,7 @@ window.__ModuleLoader__.load({
         return ctx.locale.register(NS, { zh: zh, en: en });
       }, "rag-testing: i18n");
       var disposeStyle = injectCss();
-      ctx.slots.inject("sidebar.footer.action", function () {
-        return ctx.slots.register({
-          name: "sidebar.footer.action",
-          id: "rag-testing",
-          order: 20,
-          locale: NS,
-        }, MenuButton);
-      });
+
       ctx.slots.inject("shell.overlay", function () {
         return ctx.slots.register({
           name: "shell.overlay",
@@ -743,7 +718,17 @@ window.__ModuleLoader__.load({
           locale: NS,
         }, OverlayRoot);
       });
-      return function () { disposeStyle && disposeStyle(); };
+      // 全局 opener：供 agentloop「菜单」里的 RAG 测试 条目调用（window.__RAG_TESTING_OPEN__）
+      window.__RAG_TESTING_OPEN__ = function () {
+        store.set({ open: true, selectedRun: null });
+      };
+      function onOpenEvent() { store.set({ open: true, selectedRun: null }); }
+      window.addEventListener("rag-testing:open", onOpenEvent);
+      return function () {
+        if (window.__RAG_TESTING_OPEN__) window.__RAG_TESTING_OPEN__ = null;
+        window.removeEventListener("rag-testing:open", onOpenEvent);
+        disposeStyle && disposeStyle();
+      };
     }
 
     exports.apply = apply;
