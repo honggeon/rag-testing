@@ -66,7 +66,10 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"[CONFIG] {e}", file=sys.stderr)
         return 3
 
-    run_id = time.strftime("%Y%m%d-%H%M%S") + f"-{hashlib.sha256(str(time.time_ns()).encode()).hexdigest()[:6]}"
+    run_id = args.run_id or (
+        time.strftime("%Y%m%d-%H%M%S")
+        + f"-{hashlib.sha256(str(time.time_ns()).encode()).hexdigest()[:6]}"
+    )
     out_dir = (args.artifacts_dir or settings.artifacts_dir) / "runs" / run_id
     writer = RunStatusWriter(out_dir, run_id, total=len(suite.cases))
     print(f"[RUN] suite={suite.id} cases={len(suite.cases)} run_id={run_id}")
@@ -195,6 +198,7 @@ def main() -> int:
 
     p_run = sub.add_parser("run", help="运行 golden suite")
     p_run.add_argument("--suite", required=True, type=Path)
+    p_run.add_argument("--run-id", default=None, help="指定 run_id（默认时间戳生成；DSH host 调用时传入）")
     p_run.add_argument("--artifacts-dir", type=Path, default=None)
     p_run.add_argument("--ingest-timeout", type=float, default=600.0)
     p_run.add_argument("--baseline", default=None, help="对比的 baseline 名（如 main）")

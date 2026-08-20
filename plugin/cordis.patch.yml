@@ -1,0 +1,13 @@
+# dsh-rag-testing bundle patch: 注册 RAG 测试插件。
+# 安装: dsh plugin --profile web add <本包路径>  或  profile 内 pnpm add -w + 手动追加本片段
+- insert:
+    - id: rag-testing
+      name: 'dsh-rag-testing'
+      config:
+        # 引擎目录（默认自动探测 <plugin>/../engine）
+        engineDir: ''
+        # 被测环境（缺省为开发环境；密码不入库，host 读进程环境变量 RAGTEST_ARAG_ADMIN_PASSWORD）
+        aragBaseUrl: 'http://183.162.245.47:9013'
+        aragAuthUrl: 'http://183.162.245.47:9011'
+        aragAdminEmail: 'ops@internal'
+        agentBaseUrl: 'http://114.214.255.153:8788'

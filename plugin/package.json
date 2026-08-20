@@ -1,0 +1,27 @@
+{
+  "name": "dsh-rag-testing",
+  "version": "0.1.0",
+  "description": "DSH RAG 测试平台面板：侧边栏菜单 + 全屏 overlay，触发/查看 ragtest 引擎运行",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": { "default": "./lib/index.js" },
+    "./client": { "default": "./lib/client.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "lib/client.js", "cordis.patch.yml"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "license": "MIT"
+}
