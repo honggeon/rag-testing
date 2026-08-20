@@ -42,35 +42,40 @@ async def execute_case(
     target_config: dict | None = None,
 ) -> CaseResult:
     """执行单个 case。expect_error / A-B 对比 / expected 三条互斥路径；
-    expected_fail（defect 证据）在出口统一做语义反转（P1-3）。"""
-    base = CaseResult(
-        case_id=case.id,
-        name=case.name,
-        status=CaseStatus.ERROR,
-        identity=case.identity,
-        severity=case.severity,
-        tags=list(case.tags),
-        expected_fail=bool(case.expected_fail),
-    )
+    repeat>1 时多次采样取均值（M6 置信度）；expected_fail（defect 证据）出口反转。"""
 
-    if case.expect_error:
-        result = await _execute_expect_error(case, base, adapter=adapter, session=session, kb=kb)
-    elif chat_adapter is not None and (case.input.question or case.input.query):
-        result = await _execute_generation(
-            case, base, chat_adapter=chat_adapter, identity=session.identity, kb=kb,
-            target_config=target_config or {}, doc_id_to_logical=doc_id_to_logical,
-            raw_dir=raw_dir,
+    async def once() -> CaseResult:
+        base = CaseResult(
+            case_id=case.id,
+            name=case.name,
+            status=CaseStatus.ERROR,
+            identity=case.identity,
+            severity=case.severity,
+            tags=list(case.tags),
+            expected_fail=bool(case.expected_fail),
         )
-    elif case.input_b is not None:
-        result = await _execute_ab(
+        if case.expect_error:
+            return await _execute_expect_error(case, base, adapter=adapter, session=session, kb=kb)
+        if chat_adapter is not None and (case.input.question or case.input.query):
+            return await _execute_generation(
+                case, base, chat_adapter=chat_adapter, identity=session.identity, kb=kb,
+                target_config=target_config or {}, doc_id_to_logical=doc_id_to_logical,
+                raw_dir=raw_dir,
+            )
+        if case.input_b is not None:
+            return await _execute_ab(
+                case, base, adapter=adapter, session=session, kb=kb,
+                doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
+            )
+        return await _execute_retrieval(
             case, base, adapter=adapter, session=session, kb=kb,
             doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
         )
-    else:
-        result = await _execute_retrieval(
-            case, base, adapter=adapter, session=session, kb=kb,
-            doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
-        )
+
+    samples = [await once()]
+    for _ in range(max(1, case.repeat) - 1):
+        samples.append(await once())
+    result = _merge_samples(case, samples) if len(samples) > 1 else samples[0]
 
     # ── defect 语义反转：expected_fail && 实际失败 = 证据有效（转为 PASSED）──
     if case.expected_fail:
@@ -87,6 +92,64 @@ async def execute_case(
                 detail=f"缺陷疑似已修复（意外通过），请更新套件: {reason}",
             ))
     return result
+
+
+def _merge_samples(case: GoldenCase, samples: list[CaseResult]) -> CaseResult:
+    """多次采样合并：状态取全过才过；指标按名取均值，detail 附样本值。"""
+    first = samples[0]
+    by_name: dict[str, list[MetricResult]] = {}
+    for s in samples:
+        for m in s.metrics:
+            by_name.setdefault(m.name, []).append(m)
+
+    merged = []
+    for name, ms in by_name.items():
+        first_m = ms[0]
+        values = [m.value for m in ms if m.value is not None]
+        skipped = first_m.skipped
+        if skipped:
+            merged.append(first_m)
+            continue
+        value = sum(values) / len(values) if values else None
+        # pass 判定：任一采样失败即失败（严格）
+        passed = all(m.passed for m in ms)
+        samples_str = ", ".join("-" if m.value is None else f"{m.value:.3f}" for m in ms)
+        merged.append(MetricResult(
+            name=name,
+            value=value,
+            threshold=first_m.threshold,
+            passed=passed,
+            category=first_m.category,
+            detail=f"{first_m.detail}；采样N={len(ms)} [{samples_str}]",
+        ))
+    first.metrics = merged
+
+    statuses = {s.status for s in samples}
+    if CaseStatus.ERROR in statuses:
+        first.status = CaseStatus.ERROR
+        first.error = next((s.error for s in samples if s.error), None)
+    elif CaseStatus.FAILED in statuses:
+        first.status = CaseStatus.FAILED
+    else:
+        first.status = CaseStatus.PASSED
+    return first
+
+
+
+async def _run_evaluator(spec, case, base):
+    """执行单个 evaluator：支持 async（LLM Judge），失败不拖垮 run。"""
+    import inspect
+
+    try:
+        metric = get_evaluator(spec.name)(case, base, spec.params)
+        if inspect.isawaitable(metric):
+            metric = await metric
+        return metric
+    except Exception as e:  # noqa: BLE001
+        return MetricResult(
+            name=spec.name, passed=False, category="error",
+            detail=f"evaluator 异常: {e}",
+        )
 
 
 async def _execute_ab(
@@ -139,16 +202,8 @@ async def _execute_ab(
         ],
     )
 
-    metrics: list[MetricResult] = []
-    for spec in case.evaluators:
-        try:
-            metric = get_evaluator(spec.name)(case, base, spec.params)
-        except Exception as e:  # noqa: BLE001
-            metric = MetricResult(name=spec.name, passed=False, category="error",
-                                  detail=f"evaluator 异常: {e}")
-        metrics.append(metric)
-    base.metrics = metrics
-    effective = [m for m in metrics if not m.skipped]
+    base.metrics = [await _run_evaluator(spec, case, base) for spec in case.evaluators]
+    effective = [m for m in base.metrics if not m.skipped]
     base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
     return base
 
@@ -239,20 +294,10 @@ async def _execute_retrieval(
         unavailable=["rerank_scores", "prompt", "token_usage"],
     )
 
-    # evaluators
-    metrics: list[MetricResult] = []
-    for spec in case.evaluators:
-        try:
-            metric = get_evaluator(spec.name)(case, base, spec.params)
-        except Exception as e:  # noqa: BLE001 —— evaluator 异常不拖垮 run
-            metric = MetricResult(
-                name=spec.name, passed=False, category="error",
-                detail=f"evaluator 异常: {e}",
-            )
-        metrics.append(metric)
-    base.metrics = metrics
+    # evaluators（支持 async，如 LLM Judge）
+    base.metrics = [await _run_evaluator(spec, case, base) for spec in case.evaluators]
 
-    effective = [m for m in metrics if not m.skipped]
+    effective = [m for m in base.metrics if not m.skipped]
     base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
     return base
 
@@ -303,6 +348,7 @@ async def _execute_generation(
             answer=chat_result.answer,
             usage=chat_result.usage,
             latency_ms=chat_result.latency_ms,
+            context=_extract_retrieved_context(chat_result.raw),
         )
 
         # TracePort：归因证据（session.messages 主路径）
@@ -333,15 +379,7 @@ async def _execute_generation(
             raw_file.write_text(json.dumps(chat_result.raw, ensure_ascii=False, indent=2),
                                 encoding="utf-8")
 
-        metrics: list[MetricResult] = []
-        for spec in case.evaluators:
-            try:
-                metric = get_evaluator(spec.name)(case, base, spec.params)
-            except Exception as e:  # noqa: BLE001
-                metric = MetricResult(name=spec.name, passed=False, category="error",
-                                      detail=f"evaluator 异常: {e}")
-            metrics.append(metric)
-        base.metrics = metrics
+        base.metrics = [await _run_evaluator(spec, case, base) for spec in case.evaluators]
 
         # 归因（在 metrics 之后，需要 generation 指标结果）
         base.trace.attribution = compute_attribution(case, base)
@@ -350,7 +388,7 @@ async def _execute_generation(
             if m.name == "retrieval_attribution":
                 m.detail = f"归因: {base.trace.attribution}"
 
-        effective = [m for m in metrics if not m.skipped]
+        effective = [m for m in base.metrics if not m.skipped]
         base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
         return base
     except AdapterError as e:
@@ -360,3 +398,20 @@ async def _execute_generation(
     finally:
         if chat_session is not None:
             await chat_adapter.delete_session(chat_session)
+
+
+def _extract_retrieved_context(raw: dict) -> str:
+    """从 chat 响应提取 knowledge_retrieve 返回的 chunk 文本（faithfulness 上下文）。"""
+    parts: list[str] = []
+    for m in ((raw.get("session") or {}).get("messages")) or []:
+        if m.get("tool_name") != "knowledge_retrieve":
+            continue
+        try:
+            data = json.loads(m.get("content") or "{}")
+        except (TypeError, ValueError):
+            continue
+        for chunk in data.get("chunks") or []:
+            text = chunk.get("text_content") or chunk.get("content")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n---\n".join(parts)[:6000]

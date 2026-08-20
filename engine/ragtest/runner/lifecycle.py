@@ -289,6 +289,11 @@ class SuiteRunner:
         if doc_lat:
             doc_lat.sort()
             summary.latency["indexing_p95_ms"] = _pct(doc_lat, 95)
+        # E2E 生成耗时（M6：e2e_latency 进 summary.latency 供 gate 使用）
+        e2e_lat = [c.generation.latency_ms for c in cases if c.generation is not None]
+        if e2e_lat:
+            e2e_lat.sort()
+            summary.latency["e2e_latency"] = _pct(e2e_lat, 95)
         self.run.summary = summary
 
     async def _cleanup(self) -> None:
@@ -306,8 +311,12 @@ class SuiteRunner:
                         pass
             admin_session = await self.adapter.login(self.admin_identity)
             owner_session = getattr(self, "_sessions", {}).get("owner", admin_session)
-            await self.adapter.cleanup_resources(owner_session, self.lease)
-            await self.adapter.cleanup_users(admin_session, self.lease)
+            failures = await self.adapter.cleanup_resources(owner_session, self.lease)
+            failures += await self.adapter.cleanup_users(admin_session, self.lease)
+            if failures:
+                self.run.lifecycle.append(LifecycleEntry(
+                    state=RunState.CLEANUP.value, at=_now(), ok=False,
+                    detail=f"清理不完整（残留 {len(failures)} 项）: " + "; ".join(failures)[:400]))
         except AdapterError as e:
             self.run.lifecycle.append(LifecycleEntry(
                 state=RunState.CLEANUP.value, at=_now(), ok=False,

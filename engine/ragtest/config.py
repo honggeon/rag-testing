@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     agent_base_url: str = "http://127.0.0.1:8788"
     agent_uid: str = ""
 
+    # ── LLM Judge（M6，OpenAI 兼容，可插拔）──
+    judge_base_url: str = ""
+    judge_model: str = ""
+    judge_api_key: str = ""
+    judge_timeout_s: float = 30.0
+
     # ── artifacts 目录契约（架构 §5.1）──
     artifacts_dir: Path = Path("artifacts")
 

@@ -59,6 +59,7 @@ class GenerationSnapshot(BaseModel):       # M4 使用
     usage: dict[str, Any] | None = None
     latency_ms: int = 0
     ttft_ms: int | None = None
+    context: str = ""          # 检索上下文（faithfulness judge 用）
 
 
 # ── Trace（诚实分层）────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ from ragtest.artifacts import RunStatusWriter
 from ragtest.assets import AssetError, load_suite
 from ragtest.baseline import compare, load_baseline, save_baseline
 from ragtest.config import load_settings
+from ragtest.evaluators import judge as judge_registry
 from ragtest.evaluators import known_evaluators
 from ragtest.gate import evaluate_gate
 from ragtest.models import RunState
@@ -79,6 +80,15 @@ async def _run(args: argparse.Namespace) -> int:
         logical_name="owner", role="admin",
         email=settings.arag_admin_email, password=settings.arag_admin_password,
     )
+
+    # LLM Judge（M6）：配置了 RAGTEST_JUDGE_BASE_URL 才启用，否则 judge 类 evaluator 自动 skipped
+    judge_client = None
+    if settings.judge_base_url and settings.judge_model:
+        from ragtest.evaluators.judge import OpenAiCompatJudge
+        judge_client = OpenAiCompatJudge(settings.judge_base_url, settings.judge_model,
+                                         settings.judge_api_key, settings.judge_timeout_s)
+        judge_registry.set_judge(judge_client)
+        print(f"[JUDGE] LLM Judge 启用: {settings.judge_model} @ {settings.judge_base_url}")
 
     # target adapter（M4）：suite.adapters.target == xuanjian 时启用 E2E 生成
     target_adapter = None
@@ -148,6 +158,9 @@ async def _run(args: argparse.Namespace) -> int:
         bp = save_baseline(run, baselines_dir, args.save_baseline)
         print(f"[BASELINE] 已保存: {bp}")
 
+    if judge_client is not None:
+        await judge_client.aclose()
+        judge_registry.set_judge(None)
     s = run.summary
     print(
         f"[{final_state}] total={s.total} passed={s.passed} failed={s.failed} "

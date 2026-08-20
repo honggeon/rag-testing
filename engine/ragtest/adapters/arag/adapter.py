@@ -351,34 +351,37 @@ class AragAdapter:
             if e.kind is not ErrorKind.NOT_FOUND:
                 raise
 
-    async def cleanup(self, session: Session, lease: RunLease) -> None:
-        """单会话全量清理（兼容用法）。docs/KB 与 users 属主不同时请用拆分方法：
-        cleanup_resources（资源属主会话）+ cleanup_users（admin 会话）。"""
-        await self.cleanup_resources(session, lease)
-        await self.cleanup_users(session, lease)
+    async def cleanup(self, session: Session, lease: RunLease) -> list[str]:
+        """单会话全量清理（兼容用法）。返回失败明细。"""
+        failures = await self.cleanup_resources(session, lease)
+        failures += await self.cleanup_users(session, lease)
+        return failures
 
-    async def cleanup_resources(self, session: Session, lease: RunLease) -> None:
+    async def cleanup_resources(self, session: Session, lease: RunLease) -> list[str]:
         """documents → knowledge_bases（需资源属主会话：不能删除他人的个人知识库）。
-        文档删除是异步的（Deleting→Deleted），KB 在文档未删净时拒绝删除
-        （400 存在处理中的文档）→ KB 删除做短 backoff 重试。"""
+        返回失败明细清单（不再静默吞错——残留必须可见，2026-08-21 泄漏事故教训）。"""
+        failures: list[str] = []
         for kb, doc in reversed(lease.documents):
             try:
                 await self.delete_document(session, kb, doc)
-            except AdapterError:
-                pass
+            except AdapterError as e:
+                failures.append(f"删文档 {doc.doc_id}: {e}")
         for kb in reversed(lease.knowledge_bases):
             try:
                 await self._delete_kb_with_retry(session, kb)
-            except AdapterError:
-                pass
+            except AdapterError as e:
+                failures.append(f"删知识库 {kb.kb_id}: {e}")
+        return failures
 
-    async def cleanup_users(self, session: Session, lease: RunLease) -> None:
-        """users（需 admin 会话）。"""
+    async def cleanup_users(self, session: Session, lease: RunLease) -> list[str]:
+        """users（需 admin 会话）。返回失败明细清单。"""
+        failures: list[str] = []
         for identity in reversed(lease.users):
             try:
                 await self.delete_user(session, identity)
-            except AdapterError:
-                pass
+            except AdapterError as e:
+                failures.append(f"删用户 {identity.arag_user_id}: {e}")
+        return failures
 
     async def _delete_kb_with_retry(self, session: Session, kb: KBHandle) -> None:
         interval = 1.0

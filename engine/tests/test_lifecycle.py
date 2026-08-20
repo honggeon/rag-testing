@@ -98,21 +98,24 @@ class FakeAdapter:
     async def delete_user(self, session, identity) -> None:
         self.calls.append(f"del_user:{identity.logical_name}")
 
-    async def cleanup_resources(self, session, lease) -> None:
+    async def cleanup_resources(self, session, lease) -> list:
         self.calls.append("cleanup:start")
         for kb, doc in reversed(lease.documents):
             await self.delete_document(session, kb, doc)
         for kb in reversed(lease.knowledge_bases):
             await self.delete_knowledge_base(session, kb)
+        return []
 
-    async def cleanup_users(self, session, lease) -> None:
+    async def cleanup_users(self, session, lease) -> list:
         for identity in reversed(lease.users):
             await self.delete_user(session, identity)
         self.calls.append("cleanup:end")
+        return []
 
-    async def cleanup(self, session, lease) -> None:
+    async def cleanup(self, session, lease) -> list:
         await self.cleanup_resources(session, lease)
         await self.cleanup_users(session, lease)
+        return []
 
 
 def make_suite(tmp_path: Path, cases: list[dict]) -> tuple:

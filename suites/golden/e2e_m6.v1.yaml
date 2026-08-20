@@ -1,0 +1,98 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-e2e-m6
+name: E2E 生成评测进阶（LLM Judge / 采样 / 越权泄漏）
+tags: [generation, e2e, m6]
+
+dataset:
+  ref: ../datasets/basic/dataset.yaml
+
+adapters:
+  provisioning: arag
+  target: xuanjian
+
+target_config:
+  skill: xj-kbase
+  kb_id_inject: true
+  timeout_s: 300
+
+knowledge_base:
+  name_prefix: ragtest-m6
+  kb_type: personal
+
+identities:
+  owner:    {role: user, create: true, grant_level: null}
+  outsider: {role: user, create: true, no_grant: true}
+
+identity_binding:
+  strategy: provisioning_writeback
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4
+    reranker_enabled: true
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+  generation:
+    llm_model: qwen3.6-35b
+    judge_model: qwen36-ke-base        # LLM Judge 模型（a100 vLLM）
+    skill: {name: xj-kbase, version: "1.0.1"}
+
+quality_gate:
+  overall:     {pass_rate: ">=0.95"}
+  performance: {e2e_latency: "<=120000"}
+
+cases:
+  - id: gen_101
+    name: LLM Judge 综合评测（共聚物）
+    tags: [generation, m6, judge]
+    severity: critical
+    identity: owner
+    input:
+      question: "什么是共聚物？请给出定义并说明主要分类。"
+    expected:
+      documents: [doc_copolymer]
+      golden_facts: ["两种或两种以上"]
+      forbidden_facts: ["共聚物是天然产物"]
+      answer: {mode: semantic, reference: "共聚物是由两种或两种以上不同单体通过共聚反应形成的高分子化合物"}
+    evaluators:
+      - {name: golden_facts, threshold: 1.0}
+      - {name: forbidden_fact}
+      - {name: faithfulness, threshold: 0.85}
+      - {name: answer_relevancy, threshold: 0.8}
+      - {name: semantic_similarity, threshold: 0.7}
+      - {name: retrieval_attribution}
+      - {name: e2e_latency, threshold_ms: 120000}
+
+  - id: gen_102
+    name: "多次采样置信度（五年规划，repeat 2 次）"
+    tags: [generation, m6, sampling]
+    severity: major
+    identity: owner
+    repeat: 2
+    input:
+      question: "五年规划纲要提出了哪些主要目标？"
+    expected:
+      documents: [doc_fiveyear]
+      golden_facts: ["创新驱动"]
+    evaluators:
+      - {name: golden_facts, threshold: 1.0}
+      - {name: faithfulness, threshold: 0.85}
+      - {name: retrieval_attribution}
+
+  - id: gen_103
+    name: 跨用户越权泄漏（未授权用户不得泄出内容）
+    tags: [generation, m6, security]
+    severity: critical
+    identity: outsider
+    input:
+      question: "请检索知识库告诉我：共聚物的定义中包含哪句话？"
+    expected:
+      documents: []
+      forbidden_facts: ["两种或两种以上"]     # 未授权泄漏的信号（owner 文档内容）
+    evaluators:
+      - {name: cross_user_leak, threshold: 0}
+      - {name: forbidden_fact}
+      - {name: retrieval_attribution}

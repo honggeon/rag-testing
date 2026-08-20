@@ -112,6 +112,7 @@ class GoldenCase(BaseModel):
     expected: ExpectedSpec | None = None
     expect_error: ExpectErrorSpec | None = None
     expected_fail: dict[str, Any] | None = None  # defect suite 标记（P1-3）
+    repeat: int = 1                        # 多次采样（M6：随机性 case 置信度）
     evaluators: list[EvaluatorSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
