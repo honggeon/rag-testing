@@ -47,11 +47,15 @@ async def main() -> int:
     headers = {"X-USER-ID": settings.agent_uid}
 
     async with httpx.AsyncClient(timeout=300.0, headers=headers, trust_env=False) as client:  # chat 档超时 300s
-        # 1. 建会话
-        resp = await client.post(f"{base}/api/session/new")
+        # 1. 建会话（服务端要求 JSON body，可为空对象 —— session.py:75）
+        resp = await client.post(f"{base}/api/session/new", json={})
         resp.raise_for_status()
         body = resp.json()
-        session_id = body.get("session_id") or (body.get("data") or {}).get("session_id")
+        session_id = (
+            body.get("session_id")
+            or (body.get("data") or {}).get("session_id")
+            or (body.get("session") or {}).get("session_id")
+        )
         if not session_id:
             log("ERROR", f"无法解析 session_id: {json.dumps(body, ensure_ascii=False)[:300]}")
             return 2
