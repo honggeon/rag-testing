@@ -35,6 +35,13 @@ environment_fingerprint:
     hybrid_search: true
     mineru_enabled: false
 
+quality_gate:
+  overall:     {pass_rate: ">=0.95"}
+  retrieval:   {recall_at_5: ">=0.90", mrr: ">=0.60"}
+  security:    {forbidden_document: "==0"}
+  performance: {search_p95_ms: "<=2000"}
+  regression:  {recall_at_5_drop: "<=0.03"}
+
 cases:
   - id: rag_001
     name: 单文档事实检索（共聚物）

@@ -1,0 +1,69 @@
+# GitHub Actions 示例 —— RAG 回归测试（自托管 runner）
+#
+# 使用前提：
+#   1. 自托管 runner 部署在能访问被测环境的内网机器上
+#      （被测服务 183.162.245.47 / 114.214.255.153 为内网地址，GitHub 云端 runner 不可达）
+#   2. runner 上安装 uv（https://docs.astral.sh/uv/）
+#   3. 仓库 secret 配置 RAGTEST_ARAG_ADMIN_PASSWORD
+#
+# 策略：
+#   - PR / 定时任务：run --baseline main（gate 失败 → exit 1 → 构建红）
+#   - main 分支推送：先跑测试，再 baseline-update 更新基线
+
+name: rag-regression
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 18 * * *"   # 每天 02:00 (UTC+8)
+  workflow_dispatch:
+
+jobs:
+  rag-regression:
+    runs-on: [self-hosted, rag-env]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run RAG regression suite
+        working-directory: engine
+        env:
+          RAGTEST_ARAG_BASE_URL: http://183.162.245.47:9013
+          RAGTEST_ARAG_AUTH_URL: http://183.162.245.47:9011
+          RAGTEST_ARAG_ADMIN_EMAIL: ops@internal
+          RAGTEST_ARAG_ADMIN_PASSWORD: ${{ secrets.RAGTEST_ARAG_ADMIN_PASSWORD }}
+        run: |
+          uv run python -m ragtest.cli run \
+            --suite ../suites/golden/basic_retrieval.v1.yaml \
+            --baseline main
+          # exit 0=通过；1=gate 失败（构建红）；2=运行错误；3=配置错误
+
+      - name: Publish JUnit report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "engine/artifacts/runs/*/junit.xml"
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-run-report
+          path: |
+            engine/artifacts/runs/*/run.json
+            engine/artifacts/runs/*/summary.md
+          retention-days: 30
+
+      # 仅主分支：测试通过后更新 baseline（显式动作）
+      - name: Update baseline (main branch only)
+        if: github.ref == 'refs/heads/main' && success()
+        working-directory: engine
+        run: |
+          LATEST=$(ls -td artifacts/runs/*/ | head -1)
+          uv run python -m ragtest.cli baseline-update \
+            --suite ../suites/golden/basic_retrieval.v1.yaml \
+            --name main --run "$LATEST"
+          git config user.name "rag-bot"
+          git config user.email "rag-bot@ci"
+          git add artifacts/baselines/
+          git commit -m "chore: baseline 更新（rag-basic-retrieval/main）" || true
+          git push
