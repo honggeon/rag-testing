@@ -1,0 +1,26 @@
+[project]
+name = "ragtest"
+version = "0.1.0"
+description = "可扩展的 RAG / 知识库系统自动化测试引擎（CLI 优先，CI 裸跑）"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
+    "respx>=0.22",
+]
+
+[tool.uv]
+# M0 阶段不以包形式安装，靠根目录 conftest.py 注入 sys.path
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
