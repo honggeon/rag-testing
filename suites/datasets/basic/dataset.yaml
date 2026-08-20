@@ -1,0 +1,16 @@
+schema_version: "1"
+id: basic_dataset
+version: "2026-08-20"
+documents:
+  - logical_id: doc_copolymer
+    path: documents/copolymer.md
+    metadata: {domain: 材料化学, topic: 共聚物}
+  - logical_id: doc_fiveyear
+    path: documents/fiveyear_plan.md
+    metadata: {domain: 经济规划, topic: 五年规划}
+  - logical_id: doc_xinhai
+    path: documents/xinhai_revolution.md
+    metadata: {domain: 历史, topic: 辛亥革命}
+  - logical_id: doc_recipe
+    path: documents/recipe.md
+    metadata: {domain: 生活, topic: 菜谱, role: 无关文档}

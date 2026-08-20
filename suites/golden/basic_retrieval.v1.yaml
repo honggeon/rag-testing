@@ -1,0 +1,93 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-basic-retrieval
+name: 基础检索回归
+tags: [smoke, retrieval]
+defaults:
+  timeout_s: 60
+  retry: 0
+
+dataset:
+  ref: ../datasets/basic/dataset.yaml
+
+adapters:
+  provisioning: arag
+  target: arag
+
+knowledge_base:
+  name_prefix: ragtest-basic
+  kb_type: team               # 权限场景必须是 team（personal 禁止授权：API 报 400）
+
+identities:
+  owner:    {role: admin}
+  reader:   {role: user, create: true, grant_level: read}
+  outsider: {role: user, create: true, no_grant: true}
+
+identity_binding:
+  strategy: provisioning_writeback
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4        # 8003-devuser 实际值（DashScope）
+    reranker_enabled: true                     # 8003-devuser 实际值
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+
+cases:
+  - id: rag_001
+    name: 单文档事实检索（共聚物）
+    tags: [smoke]
+    severity: critical
+    identity: reader
+    input: {query: "什么是共聚物？它有哪些主要分类？", top_k: 5, score_threshold: 0.0}
+    expected:
+      documents: [doc_copolymer]
+      forbidden_documents: [doc_recipe]
+    evaluators:
+      - {name: recall_at_k, k: 5, threshold: 1.0}
+      - {name: hit_rate_at_k, k: 5, threshold: 1.0}
+      - {name: mrr, threshold: 0.5}
+      - {name: forbidden_document}
+      - {name: search_latency, threshold_ms: 5000}
+
+  - id: rag_002
+    name: 语义检索（辛亥革命，同义改写）
+    tags: [smoke, semantic]
+    severity: critical
+    identity: reader
+    input: {query: "清朝统治是怎么被推翻的？", top_k: 5, score_threshold: 0.0}
+    expected:
+      documents: [doc_xinhai]
+      forbidden_documents: [doc_recipe]
+    evaluators:
+      - {name: hit_rate_at_k, k: 5, threshold: 1.0}
+      - {name: forbidden_document}
+
+  - id: rag_003
+    name: 越权检索防护（未授权用户应被 403 拒绝）
+    tags: [security, permission]
+    severity: critical
+    identity: outsider
+    input: {query: "共聚物", top_k: 10}
+    expect_error: {kind: auth}        # team KB 未授权 → 403 权限不足（arag 主动拒绝）
+
+  - id: rag_004
+    name: 空查询鲁棒性
+    tags: [robustness]
+    severity: minor
+    identity: reader
+    input: {query: ""}
+    expect_error: {kind: validation}
+
+  - id: rag_005
+    name: 无关问题（不得给出高置信度结果）
+    tags: [robustness]
+    severity: minor
+    identity: reader
+    input: {query: "量子引力与弦论的最新进展", top_k: 5, score_threshold: 0.0}
+    expected:
+      documents: []
+    evaluators:
+      - {name: max_score_below, threshold: 0.5}

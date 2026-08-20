@@ -1,0 +1,297 @@
+"""Suite 生命周期运行器（架构 §12.2 状态机 + RunLease 清理，评审 P0-5/P1-2）。
+
+INIT → LOAD_SUITE → LOGIN → CREATE_KB → UPLOAD_DOCUMENTS → WAIT_INDEX_READY
+→ RUN_TEST_CASES → EVALUATE → GENERATE_REPORT → CLEANUP → DONE
+异常路径：ERROR / TIMEOUT / CANCELLED / PARTIAL，CLEANUP finally 语义必达。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import secrets
+import subprocess
+import time
+from pathlib import Path
+
+from ragtest.adapters.base import (
+    AdapterError,
+    DocumentAsset,
+    Identity,
+    KBSpec,
+    PollPolicy,
+    RunLease,
+    Session,
+)
+from ragtest.artifacts import RunStatusWriter
+from ragtest.models import CaseStatus, RunState
+from ragtest.models.result import (
+    DocumentRunInfo,
+    LifecycleEntry,
+    RunSummary,
+    TestRun,
+)
+from ragtest.models.suite import Dataset, GoldenSuite
+from ragtest.runner.executor import execute_case
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def _git_commit(cwd: Path) -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=5,
+        ).stdout.strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class SuiteRunner:
+    """单 suite 运行器。M1：target=provisioning=arag（双 adapter 在 M4 引入）。"""
+
+    def __init__(
+        self,
+        *,
+        suite: GoldenSuite,
+        dataset: Dataset,
+        dataset_base: Path,
+        adapter,                          # ProvisioningPort + RetrievalPort
+        admin_identity: Identity,         # settings 提供的管理账号（ops/admin）
+        run_id: str,
+        writer: RunStatusWriter,
+        repo_root: Path,
+        ingest_timeout_s: float = 600.0,
+    ):
+        self.suite = suite
+        self.dataset = dataset
+        self.dataset_base = dataset_base
+        self.adapter = adapter
+        self.admin_identity = admin_identity
+        self.run_id = run_id
+        self.writer = writer
+        self.repo_root = repo_root
+        self.ingest_timeout_s = ingest_timeout_s
+
+        self.lease = RunLease(run_id=run_id)
+        self.run = TestRun(run_id=run_id)
+        self.doc_id_to_logical: dict[str, str] = {}
+        self._cancelled = False
+        self._heartbeat_task: asyncio.Task | None = None
+
+    # ── 生命周期记录 ──────────────────────────────────────────────────────
+
+    def _enter(self, state: RunState, *, done: int | None = None, detail: str = "") -> None:
+        self.writer.update(state, done=done, message=detail or None)
+        self.run.lifecycle.append(LifecycleEntry(state=state.value, at=_now(), detail=detail))
+
+    # ── 主流程 ────────────────────────────────────────────────────────────
+
+    async def run_suite(self) -> TestRun:
+        started = time.perf_counter()
+        self._heartbeat_task = asyncio.create_task(self.writer.heartbeat())
+        final = RunState.ERROR
+        try:
+            await self._setup_and_run()
+            error_cases = sum(1 for c in self.run.cases if c.status is CaseStatus.ERROR)
+            final = RunState.PARTIAL if error_cases else RunState.DONE
+        except asyncio.CancelledError:
+            final = RunState.CANCELLED
+            self.run.lifecycle.append(
+                LifecycleEntry(state=RunState.CANCELLED.value, at=_now(), detail="收到取消信号"))
+        except AdapterError as e:
+            final = RunState.TIMEOUT if e.kind.value == "timeout" else RunState.ERROR
+            self.run.lifecycle.append(
+                LifecycleEntry(state=final.value, at=_now(), ok=False, detail=str(e)[:200]))
+        except Exception as e:  # noqa: BLE001
+            final = RunState.ERROR
+            self.run.lifecycle.append(
+                LifecycleEntry(state=RunState.ERROR.value, at=_now(), ok=False, detail=str(e)[:200]))
+        finally:
+            await self._cleanup()
+            self._finalize(final, started)
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+        return self.run
+
+    async def _setup_and_run(self) -> None:
+        suite = self.suite
+
+        # LOGIN：admin + 各 identity（含动态建用户与 IdentityBinding 回写）
+        self._enter(RunState.LOGIN)
+        admin_session = await self.adapter.login(self.admin_identity)
+        sessions: dict[str, Session] = {}
+        for name, spec in suite.identities.items():
+            if name == "owner" or spec.role == "admin":
+                sessions[name] = admin_session
+                continue
+            identity = Identity(
+                logical_name=name,
+                role=spec.role,
+                email=f"ragtest-{self.run_id[-6:]}-{name}@test.local",
+                password=f"Ragtest-{secrets.token_hex(4)}!",
+            )
+            await self.adapter.ensure_user(admin_session, identity)
+            self.lease.users.append(identity)
+            sessions[name] = await self.adapter.login(identity)
+
+        owner = sessions.get("owner", admin_session)
+
+        # CREATE_KB
+        self._enter(RunState.CREATE_KB)
+        kb = await self.adapter.create_knowledge_base(
+            owner, KBSpec(
+                name=f"{suite.knowledge_base.name_prefix}-{self.run_id[-6:]}",
+                description=f"ragtest suite={suite.id} run={self.run_id}",
+                kb_type=suite.knowledge_base.kb_type,
+            ))
+        self.lease.knowledge_bases.append(kb)
+        self.run.kb = {"kb_id": kb.kb_id, "name": kb.name, "documents": []}
+
+        # 授权（no_grant 的 identity 跳过）
+        for name, spec in suite.identities.items():
+            if spec.no_grant or name == "owner" or spec.role == "admin":
+                continue
+            identity = next(u for u in self.lease.users if u.logical_name == name)
+            await self.adapter.grant_permission(owner, kb, identity, spec.grant_level or "read")
+
+        # UPLOAD_DOCUMENTS
+        self._enter(RunState.UPLOAD_DOCUMENTS)
+        handles = []
+        for doc in self.dataset.documents:
+            handle = await self.adapter.upload_document(
+                owner, kb, DocumentAsset(
+                    path=self.dataset_base / doc.path, logical_id=doc.logical_id,
+                    metadata=doc.metadata))
+            handles.append((doc.logical_id, handle))
+            self.lease.documents.append((kb, handle))
+            self.doc_id_to_logical[handle.doc_id] = doc.logical_id
+
+        # WAIT_INDEX_READY
+        self._enter(RunState.WAIT_INDEX_READY)
+        for logical_id, handle in handles:
+            t0 = time.perf_counter()
+            info = await self.adapter.wait_until_ready(
+                owner, kb, handle,
+                poll=PollPolicy(timeout_s=self.ingest_timeout_s))
+            self.run.kb["documents"].append(DocumentRunInfo(
+                logical_id=logical_id,
+                doc_id=handle.doc_id,
+                filename=handle.filename,
+                indexing_latency_ms=int((time.perf_counter() - t0) * 1000),
+                final_status=info.status.value,
+                chunk_count=info.chunk_count,
+            ).model_dump())
+
+        # RUN_TEST_CASES
+        self._enter(RunState.RUN_TEST_CASES, done=0)
+        raw_dir = self.writer.run_dir / "raw"
+        for idx, case in enumerate(suite.cases, start=1):
+            if self._cancelled:
+                raise asyncio.CancelledError
+            self.writer.update(RunState.RUN_TEST_CASES, done=idx - 1, current_case=case.id)
+            session = sessions.get(case.identity)
+            if session is None:
+                from ragtest.models.result import CaseError, CaseResult
+                self.run.cases.append(CaseResult(
+                    case_id=case.id, name=case.name, status=CaseStatus.ERROR,
+                    identity=case.identity,
+                    error=CaseError(kind="config", message=f"identity '{case.identity}' 未定义"),
+                ))
+                continue
+            result = await execute_case(
+                case, adapter=self.adapter, session=session, kb=kb,
+                doc_id_to_logical=self.doc_id_to_logical, raw_dir=raw_dir)
+            self.run.cases.append(result)
+
+        # EVALUATE（指标已在 case 内计算，这里做汇总）
+        self._enter(RunState.EVALUATE, done=len(suite.cases))
+        self._summarize()
+
+        # GENERATE_REPORT（run.json 由 cli 原子写；M2 补 summary.md/junit）
+        self._enter(RunState.GENERATE_REPORT)
+
+    # ── 汇总 / 收尾 ─────────────────────────────────────────────────────────
+
+    def _summarize(self) -> None:
+        cases = self.run.cases
+        summary = RunSummary(total=len(cases))
+        for c in cases:
+            match c.status:
+                case CaseStatus.PASSED:
+                    summary.passed += 1
+                case CaseStatus.FAILED:
+                    summary.failed += 1
+                case CaseStatus.ERROR:
+                    summary.error += 1
+                case CaseStatus.SKIPPED:
+                    summary.skipped += 1
+        counted = summary.passed + summary.failed
+        summary.pass_rate = summary.passed / counted if counted else 0.0
+
+        # 指标均值（跳过 skipped）
+        buckets: dict[str, list[float]] = {}
+        for c in cases:
+            for m in c.metrics:
+                if not m.skipped and m.value is not None:
+                    buckets.setdefault(m.name, []).append(m.value)
+        summary.metrics_avg = {k: sum(v) / len(v) for k, v in buckets.items()}
+
+        latencies = [
+            c.retrieval.latency_ms for c in cases if c.retrieval is not None
+        ]
+        if latencies:
+            latencies.sort()
+            summary.latency = {
+                "search_p50_ms": _pct(latencies, 50),
+                "search_p95_ms": _pct(latencies, 95),
+            }
+        doc_lat = [d["indexing_latency_ms"] for d in self.run.kb.get("documents", [])]
+        if doc_lat:
+            doc_lat.sort()
+            summary.latency["indexing_p95_ms"] = _pct(doc_lat, 95)
+        self.run.summary = summary
+
+    async def _cleanup(self) -> None:
+        """RunLease 逆序清理（评审 P1-2）：documents → KB → users。必达。"""
+        self.writer.update(RunState.CLEANUP, message="清理测试资源")
+        self.run.lifecycle.append(LifecycleEntry(state=RunState.CLEANUP.value, at=_now()))
+        try:
+            admin_session = await self.adapter.login(self.admin_identity)
+            await self.adapter.cleanup(admin_session, self.lease)
+        except AdapterError as e:
+            self.run.lifecycle.append(LifecycleEntry(
+                state=RunState.CLEANUP.value, at=_now(), ok=False,
+                detail=f"清理异常（残留见 lease）: {e}"[:200]))
+
+    def _finalize(self, final: RunState, started: float) -> None:
+        self.run.lifecycle.append(LifecycleEntry(state=final.value, at=_now()))
+        self.run.suite = {
+            "id": self.suite.id,
+            "name": self.suite.name,
+            "dataset_id": self.dataset.id,
+            "dataset_version": self.dataset.version,
+            "golden_checksum": "",  # M2 由 cli 回填
+        }
+        self.run.environment = {
+            "adapter": {"name": getattr(self.adapter, "name", "unknown")},
+            "fingerprint": {
+                "retrieval": dict(self.suite.environment_fingerprint.retrieval),
+                "generation": dict(self.suite.environment_fingerprint.generation),
+            },
+            "git_commit": _git_commit(self.repo_root),
+            "started_at": self.run.lifecycle[0].at if self.run.lifecycle else _now(),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+        self.writer.update(final, message=f"run 终态 {final.value}")
+
+
+def _pct(sorted_values: list[float], pct: int) -> float:
+    """最近秩百分位（输入已排序）。"""
+    if not sorted_values:
+        return 0.0
+    import math
+
+    rank = math.ceil(pct / 100 * len(sorted_values))
+    return float(sorted_values[max(0, min(rank, len(sorted_values)) - 1)])

@@ -327,10 +327,24 @@ class AragAdapter:
 
     # ── 清理（RunLease 逆序，评审 P1-2）────────────────────────────────────
 
+    async def delete_user(self, session: Session, identity: Identity) -> None:
+        """删除测试用户账号（auth admin API：`DELETE /auth/v1/admin/users/{id}`）。
+        注意区别于 app 侧 `DELETE /api/v1/admin/users/{id}`——后者删的是用户 KB 数据而非账号
+        （arag-app/src/kb/handlers.rs:437 delete_kb_user_impl）。404 幂等忽略。"""
+        if not identity.arag_user_id:
+            return
+        try:
+            await self._api(
+                "DELETE", f"/auth/v1/admin/users/{identity.arag_user_id}",
+                auth=True, session=session,
+            )
+        except AdapterError as e:
+            if e.kind is not ErrorKind.NOT_FOUND:
+                raise
+
     async def cleanup(self, session: Session, lease: RunLease) -> None:
         """按逆序释放资源：documents → knowledge_bases → users。
-        单资源失败不阻断后续清理（记录日志由调用方处理）。users 删除需 admin API，
-        M0 暂未实现，保留在 lease 中供报告标注。"""
+        单资源失败不阻断后续清理（残留由调用方记录）。"""
         for kb, doc in reversed(lease.documents):
             try:
                 await self.delete_document(session, kb, doc)
@@ -339,6 +353,11 @@ class AragAdapter:
         for kb in reversed(lease.knowledge_bases):
             try:
                 await self.delete_knowledge_base(session, kb)
+            except AdapterError:
+                pass
+        for identity in reversed(lease.users):
+            try:
+                await self.delete_user(session, identity)
             except AdapterError:
                 pass
 

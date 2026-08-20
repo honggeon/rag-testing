@@ -47,3 +47,10 @@ class RunState(enum.Enum):
 TERMINAL_STATES: frozenset[RunState] = frozenset(
     {RunState.DONE, RunState.PARTIAL, RunState.ERROR, RunState.TIMEOUT, RunState.CANCELLED}
 )
+
+
+class CaseStatus(enum.Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    ERROR = "error"
+    SKIPPED = "skipped"
