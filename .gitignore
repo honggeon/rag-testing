@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.uv/
+
+# Node / DSH plugin
+node_modules/
+
+# 运行产物（baselines 除外，随 git 提交）
+artifacts/runs/
+
+# 本地环境
+.env
+.DS_Store
