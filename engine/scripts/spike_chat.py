@@ -46,29 +46,40 @@ async def main() -> int:
     base = settings.agent_base_url.rstrip("/")
     headers = {"X-USER-ID": settings.agent_uid}
 
-    async with httpx.AsyncClient(timeout=300.0, headers=headers, trust_env=False) as client:  # chat 档超时 300s
-        # 1. 建会话（服务端要求 JSON body，可为空对象 —— session.py:75）
-        resp = await client.post(f"{base}/api/session/new", json={})
-        resp.raise_for_status()
-        body = resp.json()
-        session_id = (
-            body.get("session_id")
-            or (body.get("data") or {}).get("session_id")
-            or (body.get("session") or {}).get("session_id")
-        )
-        if not session_id:
-            log("ERROR", f"无法解析 session_id: {json.dumps(body, ensure_ascii=False)[:300]}")
-            return 2
-        log("SESSION", f"session_id={session_id}")
+    session_id: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=300.0, headers=headers, trust_env=False) as client:  # chat 档超时 300s
+            # 1. 建会话（服务端要求 JSON body，可为空对象 —— session.py:75）
+            resp = await client.post(f"{base}/api/session/new", json={})
+            resp.raise_for_status()
+            body = resp.json()
+            session_id = (
+                body.get("session_id")
+                or (body.get("data") or {}).get("session_id")
+                or (body.get("session") or {}).get("session_id")
+            )
+            if not session_id:
+                log("ERROR", f"无法解析 session_id: {json.dumps(body, ensure_ascii=False)[:300]}")
+                return 2
+            log("SESSION", f"session_id={session_id}")
 
-        # 2. 同步 chat
-        payload: dict = {"session_id": session_id, "message": question}
-        if skill:
-            payload["skill"] = skill
-        log("CHAT", f"question={question!r} skill={skill!r}（最长等待 300s）…")
-        resp = await client.post(f"{base}/api/chat", json=payload)
-        resp.raise_for_status()
-        result = resp.json()
+            # 2. 同步 chat
+            payload: dict = {"session_id": session_id, "message": question}
+            if skill:
+                payload["skill"] = skill
+            log("CHAT", f"question={question!r} skill={skill!r}（最长等待 300s）…")
+            resp = await client.post(f"{base}/api/chat", json=payload)
+            resp.raise_for_status()
+            result = resp.json()
+    finally:
+        # finally 语义清理（评审 P1-2）：任何失败路径都不能把会话留在服务器上
+        if session_id:
+            async with httpx.AsyncClient(timeout=30.0, headers=headers, trust_env=False) as client:
+                try:
+                    await client.post(f"{base}/api/session/delete", json={"session_id": session_id})
+                    log("CLEANUP", "会话已删除")
+                except Exception as e:  # noqa: BLE001 —— 清理失败只告警不掩盖主错误
+                    log("CLEANUP", f"⚠️ 会话删除失败，需手工清理 session_id={session_id}: {e}")
 
     # 3. 落 fixture
     FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -96,10 +107,7 @@ async def main() -> int:
     else:
         log("P0-6", "⚠️ 未发现 tool_calls（问题可能未触发知识库检索；换个知识类问题重试）")
 
-    # 5. 清理会话
-    async with httpx.AsyncClient(timeout=30.0, headers=headers, trust_env=False) as client:
-        await client.post(f"{base}/api/session/delete", json={"session_id": session_id})
-    log("CLEANUP", "会话已删除")
+    # 5. 返回（会话已在 finally 中清理）
     return 0
 
 
