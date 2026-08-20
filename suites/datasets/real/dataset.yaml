@@ -1,0 +1,8 @@
+schema_version: "1"
+id: real_dataset
+version: "2026-08-20"
+documents:
+  # 真实文档：COC 微流控综述（4 页英文 PDF，来自被测仓 test_documents/）
+  - logical_id: doc_coc_pdf
+    path: documents/coc_microfluidics.pdf
+    metadata: {domain: 材料科学, topic: "Cyclic Olefin Copolymer / microfluidics", lang: en}

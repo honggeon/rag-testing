@@ -37,7 +37,8 @@ async def execute_case(
     doc_id_to_logical: dict[str, str],
     raw_dir: Path | None = None,
 ) -> CaseResult:
-    """执行单个 case。expect_error 与 expected 两条互斥路径。"""
+    """执行单个 case。expect_error / A-B 对比 / expected 三条互斥路径；
+    expected_fail（defect 证据）在出口统一做语义反转（P1-3）。"""
     base = CaseResult(
         case_id=case.id,
         name=case.name,
@@ -49,11 +50,97 @@ async def execute_case(
     )
 
     if case.expect_error:
-        return await _execute_expect_error(case, base, adapter=adapter, session=session, kb=kb)
-    return await _execute_retrieval(
-        case, base, adapter=adapter, session=session, kb=kb,
-        doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
+        result = await _execute_expect_error(case, base, adapter=adapter, session=session, kb=kb)
+    elif case.input_b is not None:
+        result = await _execute_ab(
+            case, base, adapter=adapter, session=session, kb=kb,
+            doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
+        )
+    else:
+        result = await _execute_retrieval(
+            case, base, adapter=adapter, session=session, kb=kb,
+            doc_id_to_logical=doc_id_to_logical, raw_dir=raw_dir,
+        )
+
+    # ── defect 语义反转：expected_fail && 实际失败 = 证据有效（转为 PASSED）──
+    if case.expected_fail:
+        reason = case.expected_fail.get("reason", "")
+        if result.status is CaseStatus.FAILED:
+            result.status = CaseStatus.PASSED
+            result.assertions.append(AssertionRecord(
+                kind="expected_fail", passed=True,
+                detail=f"缺陷已复现（证据有效）: {reason}",
+            ))
+        elif result.status is CaseStatus.PASSED:
+            result.assertions.append(AssertionRecord(
+                kind="expected_fail", passed=True,
+                detail=f"缺陷疑似已修复（意外通过），请更新套件: {reason}",
+            ))
+    return result
+
+
+async def _execute_ab(
+    case: GoldenCase, base: CaseResult, *, adapter, session, kb,
+    doc_id_to_logical: dict[str, str], raw_dir: Path | None,
+) -> CaseResult:
+    """A/B 对比路径（缺陷探针）：同 query 两组参数各检索一次，
+    结果一致性写入 trace.server_signals.ab，由 ab_results_differ evaluator 判定。"""
+    assert case.input_b is not None
+
+    async def probe(inp) -> list[tuple[str, float]]:
+        result = await adapter.retrieve(
+            session, kb, RetrievalQuery(
+                query=inp.query or "",
+                top_k=inp.top_k,
+                score_threshold=inp.score_threshold,
+                extra_body=dict(inp.extra_body),
+            )
+        )
+        return [(c.chunk_id, round(c.score, 6)) for c in result.chunks]
+
+    try:
+        chunks_a = await probe(case.input)
+        chunks_b = await probe(case.input_b)
+    except AdapterError as e:
+        base.status = CaseStatus.ERROR
+        base.error = CaseError(kind=e.kind.value, message=e.message)
+        return base
+
+    identical = chunks_a == chunks_b
+    base.trace = TraceInfo(
+        client_spans=[Span(name="retrieve_ab", duration_ms=0)],
+        server_signals={
+            "ab": {
+                "identical": identical,
+                "a": [cid for cid, _ in chunks_a],
+                "b": [cid for cid, _ in chunks_b],
+                "a_params": dict(case.input.extra_body),
+                "b_params": dict(case.input_b.extra_body),
+            }
+        },
+        unavailable=["rerank_scores"],
     )
+    base.retrieval = RetrievalSnapshot(
+        query=case.input.query or "",
+        top_k=case.input.top_k,
+        chunks=[
+            ChunkSnapshot(chunk_id=cid, document_id="", rank=i + 1, score=score)
+            for i, (cid, score) in enumerate(chunks_a)
+        ],
+    )
+
+    metrics: list[MetricResult] = []
+    for spec in case.evaluators:
+        try:
+            metric = get_evaluator(spec.name)(case, base, spec.params)
+        except Exception as e:  # noqa: BLE001
+            metric = MetricResult(name=spec.name, passed=False, category="error",
+                                  detail=f"evaluator 异常: {e}")
+        metrics.append(metric)
+    base.metrics = metrics
+    effective = [m for m in metrics if not m.skipped]
+    base.status = CaseStatus.PASSED if all(m.passed for m in effective) else CaseStatus.FAILED
+    return base
 
 
 async def _execute_expect_error(case: GoldenCase, base: CaseResult, *, adapter, session, kb) -> CaseResult:

@@ -1,0 +1,48 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-robustness
+name: 鲁棒性套件（异常输入与边界场景）
+tags: [robustness]
+
+dataset:
+  ref: ../datasets/robustness/dataset.yaml
+
+adapters: {provisioning: arag, target: arag}
+knowledge_base: {name_prefix: ragtest-rob, kb_type: team}
+
+identities:
+  owner:  {role: admin}
+  reader: {role: user, create: true, grant_level: read}
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4
+    reranker_enabled: true
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+
+# 生命周期级断言（见 run.json kb.documents 与 lifecycle）：
+# - doc_empty：0 字节文件，预期摄入失败（failed_expected）
+# - doc_dup：同文件上传两次，幂等探针
+cases:
+  - id: rob_001
+    name: 错别字查询容错（共聚勿→共聚物）
+    tags: [robustness, typo]
+    severity: minor
+    identity: reader
+    input: {query: "共聚勿材料有哪些分类？", top_k: 5}
+    expected:
+      documents: [doc_copolymer]
+    evaluators:
+      - {name: hit_rate_at_k, k: 5, threshold: 1.0}
+
+  - id: rob_002
+    name: 超长查询（1100 字符，超过 app 上限 1000）
+    tags: [robustness, boundary]
+    severity: minor
+    identity: reader
+    input:
+      query: "共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？共聚物是什么？"
+    expect_error: {kind: validation}

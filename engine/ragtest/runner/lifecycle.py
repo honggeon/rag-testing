@@ -156,7 +156,7 @@ class SuiteRunner:
             identity = next(u for u in self.lease.users if u.logical_name == name)
             await self.adapter.grant_permission(owner, kb, identity, spec.grant_level or "read")
 
-        # UPLOAD_DOCUMENTS
+        # UPLOAD_DOCUMENTS（metadata.upload_twice → 幂等探针：同文件上传两次）
         self._enter(RunState.UPLOAD_DOCUMENTS)
         handles = []
         for doc in self.dataset.documents:
@@ -164,25 +164,56 @@ class SuiteRunner:
                 owner, kb, DocumentAsset(
                     path=self.dataset_base / doc.path, logical_id=doc.logical_id,
                     metadata=doc.metadata))
-            handles.append((doc.logical_id, handle))
+            if doc.metadata.get("upload_twice"):
+                dup = await self.adapter.upload_document(
+                    owner, kb, DocumentAsset(
+                        path=self.dataset_base / doc.path, logical_id=doc.logical_id,
+                        metadata=doc.metadata))
+                # 重复上传会产生新文档记录（服务端 resolve_duplicate_filename 改名），
+                # 必须纳入 lease，否则 cleanup 漏删（真实泄漏事故 2026-08-20）
+                if dup.doc_id != handle.doc_id:
+                    self.lease.documents.append((kb, dup))
+                    self.doc_id_to_logical[dup.doc_id] = doc.logical_id
+                self.run.lifecycle.append(LifecycleEntry(
+                    state=RunState.UPLOAD_DOCUMENTS.value, at=_now(),
+                    detail=f"重复上传幂等探针 {doc.logical_id}: 第二次上传成功"
+                           f"（{'同 doc_id 幂等' if dup.doc_id == handle.doc_id else '产生了新 doc_id'}）",
+                ))
+            handles.append((doc.logical_id, handle, doc))
             self.lease.documents.append((kb, handle))
             self.doc_id_to_logical[handle.doc_id] = doc.logical_id
 
-        # WAIT_INDEX_READY
+        # WAIT_INDEX_READY（metadata.expect_ingest_failure → 预期摄入失败，如空文件）
         self._enter(RunState.WAIT_INDEX_READY)
-        for logical_id, handle in handles:
+        for logical_id, handle, doc in handles:
             t0 = time.perf_counter()
-            info = await self.adapter.wait_until_ready(
-                owner, kb, handle,
-                poll=PollPolicy(timeout_s=self.ingest_timeout_s))
+            expect_fail = bool(doc.metadata.get("expect_ingest_failure"))
+            try:
+                info = await self.adapter.wait_until_ready(
+                    owner, kb, handle,
+                    poll=PollPolicy(timeout_s=self.ingest_timeout_s))
+                final_status = "ready_unexpected" if expect_fail else info.status.value
+                chunk_count = info.chunk_count
+                error_message = None
+            except Exception as e:  # IngestFailed
+                if not expect_fail:
+                    raise
+                final_status = "failed_expected"
+                chunk_count = None
+                error_message = str(e)[:120]
             self.run.kb["documents"].append(DocumentRunInfo(
                 logical_id=logical_id,
                 doc_id=handle.doc_id,
                 filename=handle.filename,
                 indexing_latency_ms=int((time.perf_counter() - t0) * 1000),
-                final_status=info.status.value,
-                chunk_count=info.chunk_count,
+                final_status=final_status,
+                chunk_count=chunk_count,
             ).model_dump())
+            if error_message:
+                self.run.lifecycle.append(LifecycleEntry(
+                    state=RunState.WAIT_INDEX_READY.value, at=_now(),
+                    detail=f"{logical_id} 按预期摄入失败（{final_status}）: {error_message}",
+                ))
 
         # RUN_TEST_CASES
         self._enter(RunState.RUN_TEST_CASES, done=0)

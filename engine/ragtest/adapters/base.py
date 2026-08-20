@@ -153,6 +153,7 @@ class RetrievalQuery:
     query: str
     top_k: int = 5
     score_threshold: float = 0.0
+    extra_body: dict[str, Any] = field(default_factory=dict)  # 透传额外字段（缺陷探针）
 
 
 @dataclass(frozen=True)

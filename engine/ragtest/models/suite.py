@@ -64,6 +64,7 @@ class InputSpec(BaseModel):
     query: str | None = None
     top_k: int = 5
     score_threshold: float = 0.0
+    extra_body: dict[str, Any] = Field(default_factory=dict)  # 透传额外请求字段（缺陷探针用）
     # generation（M4）
     question: str | None = None
 
@@ -107,6 +108,7 @@ class GoldenCase(BaseModel):
     identity: str = "owner"
     timeout_s: int | None = None
     input: InputSpec
+    input_b: InputSpec | None = None   # A/B 对比 case（缺陷探针，如权重 A/B）
     expected: ExpectedSpec | None = None
     expect_error: ExpectErrorSpec | None = None
     expected_fail: dict[str, Any] | None = None  # defect suite 标记（P1-3）

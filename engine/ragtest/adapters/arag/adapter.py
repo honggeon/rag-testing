@@ -86,13 +86,17 @@ class AragAdapter:
         auth: bool = False,
         session: Session | None = None,
         json: Any = None,
+        timeout: float | None = None,
         **kw: Any,
     ) -> Any:
-        """统一请求 + 信封解包。返回信封 data 字段（可能为 None）。"""
+        """统一请求 + 信封解包。返回信封 data 字段（可能为 None）。
+        timeout=None 用客户端默认（30s 档）；上传等大请求显式传更久（分级超时 P0-2）。"""
         url = (self._auth if auth else self._app) + path
         headers: dict[str, str] = dict(kw.pop("headers", {}) or {})
         if session is not None:
             headers["Authorization"] = f"Bearer {session.token}"
+        if timeout is not None:
+            kw["timeout"] = timeout
 
         attempts = _GET_MAX_RETRIES if method == "GET" else 1
         last_exc: Exception | None = None
@@ -198,12 +202,15 @@ class AragAdapter:
         path = Path(doc.path)
         content = path.read_bytes()
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        # 上传档超时（P0-2 分级）：随文件大小伸缩，下限 120s、上限 600s
+        upload_timeout = min(600.0, max(120.0, len(content) / 1024 / 1024 * 10))
         data = await self._api(
             "POST",
             f"/api/v1/knowledge-bases/{kb.kb_id}/documents",
             session=session,
             files={"file": (path.name, content, mime)},
             data={"path": "/"},
+            timeout=upload_timeout,
         )
         return DocumentHandle(
             doc_id=data["id"],
@@ -285,15 +292,17 @@ class AragAdapter:
         self, session: Session, kb: KBHandle, query: RetrievalQuery
     ) -> RetrievalResult:
         started = time.perf_counter()
+        body = {
+            "query": query.query,
+            "top_k": query.top_k,
+            "score_threshold": query.score_threshold,
+            **query.extra_body,  # 缺陷探针：透传 schema 外字段（如 vector_similarity_weight）
+        }
         data = await self._api(
             "POST",
             f"/api/v1/knowledge-bases/{kb.kb_id}/search",
             session=session,
-            json={
-                "query": query.query,
-                "top_k": query.top_k,
-                "score_threshold": query.score_threshold,
-            },
+            json=body,
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         items = data.get("items") or []
@@ -344,22 +353,36 @@ class AragAdapter:
 
     async def cleanup(self, session: Session, lease: RunLease) -> None:
         """按逆序释放资源：documents → knowledge_bases → users。
-        单资源失败不阻断后续清理（残留由调用方记录）。"""
+        单资源失败不阻断后续清理（残留由调用方记录）。
+        文档删除是异步的（Deleting→Deleted），KB 在文档未删净时拒绝删除
+        （400 存在处理中的文档）→ KB 删除做短 backoff 重试。"""
         for kb, doc in reversed(lease.documents):
             try:
                 await self.delete_document(session, kb, doc)
             except AdapterError:
                 pass
         for kb in reversed(lease.knowledge_bases):
-            try:
-                await self.delete_knowledge_base(session, kb)
-            except AdapterError:
-                pass
+            await self._delete_kb_with_retry(session, kb)
         for identity in reversed(lease.users):
             try:
                 await self.delete_user(session, identity)
             except AdapterError:
                 pass
+
+    async def _delete_kb_with_retry(self, session: Session, kb: KBHandle) -> None:
+        interval = 1.0
+        for _ in range(6):  # ~31s 总窗口（1+2+4+8+8+8）
+            try:
+                await self.delete_knowledge_base(session, kb)
+                return
+            except AdapterError as e:
+                if e.kind is ErrorKind.NOT_FOUND:
+                    return
+                # 文档删除未完成的暂态拒绝 → backoff 重试；其余错误上抛
+                if not (e.kind is ErrorKind.VALIDATION and "处理中" in e.message):
+                    raise
+                await asyncio.sleep(interval)
+                interval = min(interval * 2, 8.0)
 
 
 def _map_error_kind(code: int) -> ErrorKind:

@@ -1,0 +1,52 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-real-documents
+name: 真实文档检索（PDF 解析链路）
+tags: [retrieval, real-documents]
+
+dataset:
+  ref: ../datasets/real/dataset.yaml
+
+adapters: {provisioning: arag, target: arag}
+knowledge_base: {name_prefix: ragtest-real, kb_type: team}
+
+identities:
+  owner:  {role: admin}
+  reader: {role: user, create: true, grant_level: read}
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4
+    reranker_enabled: true
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+
+cases:
+  - id: real_001
+    name: COC 特性检索（英文 query）
+    tags: [retrieval]
+    severity: critical
+    identity: reader
+    input:
+      query: "What are the main features of cyclic olefin copolymers (COC) used in microfluidic devices?"
+      top_k: 5
+    expected:
+      documents: [doc_coc_pdf]
+    evaluators:
+      - {name: recall_at_k, k: 5, threshold: 1.0}
+      - {name: mrr, threshold: 0.5}
+
+  - id: real_002
+    name: COC 微流控应用检索（中文 query 跨语言）
+    tags: [retrieval, cross-lingual]
+    severity: major
+    identity: reader
+    input:
+      query: "环烯烃共聚物（COC）为什么适合制造微流控器件？"
+      top_k: 5
+    expected:
+      documents: [doc_coc_pdf]
+    evaluators:
+      - {name: hit_rate_at_k, k: 5, threshold: 1.0}

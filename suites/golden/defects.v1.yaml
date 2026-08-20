@@ -1,0 +1,54 @@
+schema_version: "1"
+kind: GoldenSuite
+id: rag-defects
+name: 已知缺陷证据套件（不进质量门）
+tags: [defect]
+
+dataset:
+  ref: ../datasets/basic/dataset.yaml
+
+adapters: {provisioning: arag, target: arag}
+knowledge_base: {name_prefix: ragtest-defect, kb_type: team}
+
+identities:
+  owner:  {role: admin}
+  reader: {role: user, create: true, grant_level: read}
+
+environment_fingerprint:
+  retrieval:
+    embedding_model: text-embedding-v4
+    reranker_enabled: true
+    max_chunk_size: 2000
+    query_expand_enabled: false
+    hybrid_search: true
+    mineru_enabled: false
+
+cases:
+  # 缺陷 1：xj-kbase skill 的 vector_weight 参数透传为 vector_similarity_weight，
+  # 但 arag SearchKbRequest 无此字段，被 serde 静默忽略 → A/B 两组极端权重结果完全一致。
+  # （xuanjian-agent/system/libs/knowledge.py:446 vs arag-app/src/search/schema.rs:13）
+  # 若未来 arag 支持该字段，结果应不同 → case 意外通过（缺陷疑似已修复）。
+  - id: defect_001
+    name: vector_similarity_weight 被静默忽略（A/B 权重探针）
+    tags: [defect, retrieval]
+    severity: major
+    identity: reader
+    input:
+      query: "共聚物的分类与应用"
+      top_k: 5
+      extra_body: {vector_similarity_weight: 0.95}
+    input_b:
+      query: "共聚物的分类与应用"
+      top_k: 5
+      extra_body: {vector_similarity_weight: 0.05}
+    expected:
+      documents: []
+    expected_fail:
+      reason: "arag SearchKbRequest 无 vector_similarity_weight 字段，serde 静默忽略（冲突清单 #8）"
+      issue: "待提"
+    evaluators:
+      - {name: ab_results_differ}
+
+  # 缺陷 2/3（agent 侧，M4 环境引入后启用）：
+  # - agent JWT 过期校验被注释（xuanjian-agent system/auth.py:83-85）
+  # - JWT_SECRET 硬编码（system/auth.py:15）

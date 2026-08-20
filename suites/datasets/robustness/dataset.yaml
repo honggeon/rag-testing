@@ -1,0 +1,14 @@
+schema_version: "1"
+id: robustness_dataset
+version: "2026-08-20"
+documents:
+  - logical_id: doc_copolymer
+    path: documents/copolymer.md
+    metadata: {domain: 材料化学}
+  - logical_id: doc_empty
+    path: documents/empty.md
+    # 实测（8003-devuser v0.6.5）：空文件被优雅处理 → ready / 0 chunks，而非摄入失败
+    metadata: {role: 空文件, expected_behavior: "ready_with_zero_chunks"}
+  - logical_id: doc_dup
+    path: documents/dup_copolymer.md
+    metadata: {role: 重复上传探针, upload_twice: true}
