@@ -528,6 +528,7 @@ environment_fingerprint:                      # 评审 P1-1：按 target 拆分�
     max_chunk_size: 2000
     query_expand_enabled: false
     hybrid_search: true
+    mineru_enabled: false                       # MinerU 开关影响解析质量 → 影响检索可比性
   # generation:                               # target=xuanjian 时必填
   #   llm_model: xuanjian-lite
   #   llm_base_url: http://127.0.0.1:7500/v1
